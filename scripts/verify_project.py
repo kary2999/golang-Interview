@@ -77,25 +77,55 @@ class VerificationError(RuntimeError):
     """Raised when the repository violates a project contract."""
 
 
-def _mask_javascript_non_code(source):
-    """Mask comments and literal text while retaining template expressions."""
-    masked = list(source)
-    source_length = len(source)
+def _lex_javascript_masks(source):
+    """Return executable and raw-resource masks for focused JS verification.
 
-    def mask_character(index):
+    A slash starts a regex only where an expression may begin: at the start,
+    after an opening delimiter or operator, or after a prefix keyword such as
+    ``return``. Slashes after expression-ending tokens are treated as division.
+    This focused heuristic avoids pretending to be a complete JavaScript parser.
+    """
+    executable_mask = list(source)
+    resource_mask = list(source)
+    source_length = len(source)
+    regex_prefix_keywords = {
+        "await",
+        "case",
+        "delete",
+        "do",
+        "else",
+        "in",
+        "instanceof",
+        "new",
+        "of",
+        "return",
+        "throw",
+        "typeof",
+        "void",
+        "yield",
+    }
+
+    def mask_character(target, index):
         if source[index] not in "\r\n":
-            masked[index] = " "
+            target[index] = " "
+
+    def mask_non_code(index):
+        mask_character(executable_mask, index)
+
+    def mask_regex(index):
+        mask_character(executable_mask, index)
+        mask_character(resource_mask, index)
 
     def consume_quoted(index, quote):
-        mask_character(index)
+        mask_non_code(index)
         index += 1
         while index < source_length:
             character = source[index]
-            mask_character(index)
+            mask_non_code(index)
             if character == "\\":
                 index += 1
                 if index < source_length:
-                    mask_character(index)
+                    mask_non_code(index)
                     index += 1
             elif character == quote:
                 return index + 1
@@ -108,81 +138,183 @@ def _mask_javascript_non_code(source):
             index < source_length
             and source[index] not in "\r\n"
         ):
-            mask_character(index)
+            mask_non_code(index)
             index += 1
         return index
 
     def consume_block_comment(index):
         while index < source_length:
             if source.startswith("*/", index):
-                mask_character(index)
-                mask_character(index + 1)
+                mask_non_code(index)
+                mask_non_code(index + 1)
                 return index + 2
-            mask_character(index)
+            mask_non_code(index)
             index += 1
         return index
 
+    def consume_regex(index):
+        cursor = index + 1
+        inside_character_class = False
+        while cursor < source_length:
+            character = source[cursor]
+            if character in "\r\n":
+                return None
+            if character == "\\":
+                cursor += 2
+                continue
+            if character == "[" and not inside_character_class:
+                inside_character_class = True
+                cursor += 1
+                continue
+            if character == "]" and inside_character_class:
+                inside_character_class = False
+                cursor += 1
+                continue
+            if character == "/" and not inside_character_class:
+                cursor += 1
+                while (
+                    cursor < source_length
+                    and source[cursor] in "dgimsuvy"
+                ):
+                    cursor += 1
+                for masked_index in range(index, cursor):
+                    mask_regex(masked_index)
+                return cursor
+            cursor += 1
+        return None
+
+    def consume_identifier(index):
+        cursor = index + 1
+        while cursor < source_length and (
+            source[cursor].isalnum()
+            or source[cursor] in {"_", "$"}
+        ):
+            cursor += 1
+        return cursor
+
+    def consume_number(index):
+        cursor = index + 1
+        while cursor < source_length and (
+            source[cursor].isalnum()
+            or source[cursor] in {"_", "."}
+        ):
+            cursor += 1
+        return cursor
+
     def consume_template(index):
-        mask_character(index)
+        mask_non_code(index)
         index += 1
         while index < source_length:
             character = source[index]
             if character == "\\":
-                mask_character(index)
+                mask_non_code(index)
                 index += 1
                 if index < source_length:
-                    mask_character(index)
+                    mask_non_code(index)
                     index += 1
             elif character == "`":
-                mask_character(index)
+                mask_non_code(index)
                 return index + 1
             elif source.startswith("${", index):
-                mask_character(index)
-                mask_character(index + 1)
-                index = consume_template_expression(index + 2)
+                mask_non_code(index)
+                mask_non_code(index + 1)
+                index = consume_code(index + 2, inside_template=True)
             else:
-                mask_character(index)
+                mask_non_code(index)
                 index += 1
         return index
 
-    def consume_template_expression(index):
-        brace_depth = 1
+    def consume_code(index, inside_template=False):
+        brace_depth = 1 if inside_template else 0
+        can_start_regex = True
         while index < source_length:
+            character = source[index]
             if source.startswith("//", index):
                 index = consume_line_comment(index)
             elif source.startswith("/*", index):
                 index = consume_block_comment(index)
-            elif source[index] in {"'", '"'}:
-                index = consume_quoted(index, source[index])
-            elif source[index] == "`":
+            elif character in {"'", '"'}:
+                index = consume_quoted(index, character)
+                can_start_regex = False
+            elif character == "`":
                 index = consume_template(index)
-            elif source[index] == "{":
+                can_start_regex = False
+            elif character == "/":
+                if can_start_regex:
+                    regex_end = consume_regex(index)
+                    if regex_end is not None:
+                        index = regex_end
+                        can_start_regex = False
+                        continue
+                index += 2 if source.startswith("/=", index) else 1
+                can_start_regex = True
+            elif character.isalpha() or character in {"_", "$"}:
+                identifier_end = consume_identifier(index)
+                identifier = source[index:identifier_end]
+                can_start_regex = identifier in regex_prefix_keywords
+                index = identifier_end
+            elif character.isdigit() or (
+                character == "."
+                and index + 1 < source_length
+                and source[index + 1].isdigit()
+            ):
+                index = consume_number(index)
+                can_start_regex = False
+            elif inside_template and character == "{":
                 brace_depth += 1
                 index += 1
-            elif source[index] == "}":
+                can_start_regex = True
+            elif inside_template and character == "}":
                 brace_depth -= 1
                 if brace_depth == 0:
-                    mask_character(index)
+                    mask_non_code(index)
                     return index + 1
                 index += 1
+                can_start_regex = False
+            elif source.startswith(("++", "--", "?."), index):
+                index += 2
+                can_start_regex = False
+            elif character in {")", "]", "}"}:
+                index += 1
+                can_start_regex = False
+            elif character == ".":
+                index += 1
+                can_start_regex = False
+            elif character in {"(", "[", "{"}:
+                index += 1
+                can_start_regex = True
+            elif character in {
+                ",",
+                ";",
+                ":",
+                "?",
+                "=",
+                "!",
+                "&",
+                "|",
+                "+",
+                "-",
+                "*",
+                "%",
+                "^",
+                "~",
+                "<",
+                ">",
+            }:
+                index += 1
+                can_start_regex = True
             else:
                 index += 1
         return index
 
-    index = 0
-    while index < source_length:
-        if source.startswith("//", index):
-            index = consume_line_comment(index)
-        elif source.startswith("/*", index):
-            index = consume_block_comment(index)
-        elif source[index] in {"'", '"'}:
-            index = consume_quoted(index, source[index])
-        elif source[index] == "`":
-            index = consume_template(index)
-        else:
-            index += 1
+    consume_code(0)
+    return "".join(executable_mask), "".join(resource_mask)
 
-    return "".join(masked)
+
+def _mask_javascript_non_code(source):
+    """Mask comments and literal text while retaining executable code."""
+    executable_mask, _ = _lex_javascript_masks(source)
+    return executable_mask
 
 
 class _IndexParser(HTMLParser):
@@ -401,8 +533,16 @@ def verify_static_code(root):
                 "缺少静态文件 {}".format(path.relative_to(root))
             )
         content = path.read_text(encoding="utf-8")
+        if path.suffix == ".js":
+            executable_content, resource_content = _lex_javascript_masks(
+                content
+            )
+        else:
+            executable_content = None
+            resource_content = content
+
         for label, pattern in _RAW_STATIC_PATTERNS.items():
-            match = pattern.search(content)
+            match = pattern.search(resource_content)
             if match is not None:
                 raise VerificationError(
                     "{}:{} 包含不允许的{}".format(
@@ -414,7 +554,6 @@ def verify_static_code(root):
         if path.suffix != ".js":
             continue
 
-        executable_content = _mask_javascript_non_code(content)
         for label, pattern in _EXECUTABLE_JAVASCRIPT_PATTERNS.items():
             match = pattern.search(executable_content)
             if match is not None:

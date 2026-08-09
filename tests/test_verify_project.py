@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT))
 from scripts.build_questions import render_questions_js
 from scripts.verify_project import (
     VerificationError,
+    _mask_javascript_non_code,
     parse_questions_js,
     verify_index,
     verify_question_records,
@@ -167,6 +168,38 @@ class VerifyProjectTest(unittest.TestCase):
             with self.assertRaises(VerificationError):
                 verify_index(root)
 
+    def test_javascript_mask_tracks_regex_context_and_source_shape(self):
+        source = (
+            r"const marker = /[\/\]{}]+/gimu;" "\n"
+            "const ratio = total / count / scale;\n"
+            'const note = `outer ${/}/.test("}") '
+            '? fetch("/x") : "safe"}`;\n'
+        )
+
+        masked = _mask_javascript_non_code(source)
+
+        self.assertEqual(len(masked), len(source))
+        self.assertEqual(
+            [
+                index
+                for index, character in enumerate(masked)
+                if character == "\n"
+            ],
+            [
+                index
+                for index, character in enumerate(source)
+                if character == "\n"
+            ],
+        )
+        regex_literal = r"/[\/\]{}]+/gimu"
+        regex_start = source.index(regex_literal)
+        self.assertEqual(
+            masked[regex_start:regex_start + len(regex_literal)],
+            " " * len(regex_literal),
+        )
+        self.assertIn("total / count / scale", masked)
+        self.assertIn("fetch(", masked)
+
     def test_static_code_rejects_network_and_dynamic_loading(self):
         forbidden_snippets = {
             "fetch": 'fetch("/questions.json");',
@@ -190,6 +223,27 @@ class VerifyProjectTest(unittest.TestCase):
             "template interpolation call": (
                 "const warning = "
                 "`request: ${new XMLHttpRequest()}`;"
+            ),
+            "escaped slash regex before fetch": (
+                r'const marker = /\/\//; fetch("/questions.json");'
+            ),
+            "regex brace inside template interpolation": (
+                'const x = `outer ${/}/.test("}") '
+                '? fetch("/x") : "safe"}`;'
+            ),
+            "regex class inside template interpolation": (
+                r"const x = `outer ${/[}\/]/gi.test(value) "
+                r'? new EventSource("/events") : "safe"}`;'
+            ),
+            "escaped class regex before beacon": (
+                r"const marker = /[\/\]]+\/\/[a-z]/gi; "
+                'navigator.sendBeacon("/telemetry", "payload");'
+            ),
+            "regex flags before WebSocket": (
+                'const marker = /offline/giu; new WebSocket("/updates");'
+            ),
+            "division before fetch": (
+                'const ratio = total / count / scale; fetch("/x");'
             ),
         }
 
@@ -229,6 +283,10 @@ class VerifyProjectTest(unittest.TestCase):
             "template literal text": (
                 "const note = `Do not use XMLHttpRequest() "
                 "or navigator.sendBeacon()`;\n"
+            ),
+            "harmless regex literals": (
+                r"const marker = /\/\//g; "
+                r"const bracket = /[\/\]{}]+/imu;" "\n"
             ),
         }
         for label, source in allowed_documentation.items():
