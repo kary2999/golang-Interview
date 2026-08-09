@@ -1,0 +1,225 @@
+# [skill: go-team-standards · dev-dna] 验证题库构建契约和安全边界
+import copy
+import re
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from scripts.build_questions import build_questions, render_questions_js
+from scripts.extract_questions import validate_questions
+
+
+SUPPLEMENTED_IDS = {73, 89, 90}
+
+
+def archive_html():
+    parts = [
+        "<!doctype html>",
+        '<div class="RichText ztext Post-RichText">',
+    ]
+    for question_id in range(1, 101):
+        if question_id == 73:
+            continue
+        if question_id == 89:
+            question = "如何优化内存使用？"
+        elif question_id == 90:
+            question = "如何优化垃圾回收？"
+        else:
+            question = "原文问题 {}？".format(question_id)
+
+        parts.append("<h3>{:02d} {}</h3>".format(question_id, question))
+        if question_id not in {89, 90}:
+            parts.append("<p>原文答案 {}</p>".format(question_id))
+    parts.extend(["<h2>文章结束</h2>", "</div>"])
+    return "".join(parts)
+
+
+class BuildQuestionsTest(unittest.TestCase):
+    def setUp(self):
+        self.source_html = archive_html()
+        self.questions = build_questions(self.source_html)
+        self.by_id = {item["id"]: item for item in self.questions}
+
+    def test_builds_exactly_one_ordered_record_for_every_id(self):
+        ids = [item["id"] for item in self.questions]
+
+        self.assertEqual(ids, list(range(1, 101)))
+        self.assertEqual(len(ids), len(set(ids)))
+
+    def test_all_questions_and_answers_are_nonempty_and_strictly_safe(self):
+        for item in self.questions:
+            with self.subTest(question_id=item["id"]):
+                self.assertTrue(item["question"].strip())
+                self.assertTrue(item["answerHtml"].strip())
+
+        validate_questions(self.questions)
+
+    def test_marks_only_the_three_source_anomalies_as_supplemented(self):
+        supplemented = {
+            item["id"]
+            for item in self.questions
+            if item["source"] == "supplemented"
+        }
+
+        self.assertEqual(supplemented, SUPPLEMENTED_IDS)
+        for item in self.questions:
+            expected = (
+                "supplemented"
+                if item["id"] in SUPPLEMENTED_IDS
+                else "zhihu-archive"
+            )
+            with self.subTest(question_id=item["id"]):
+                self.assertEqual(item["source"], expected)
+
+    def test_supplements_73_with_receiver_and_method_set_guidance(self):
+        record = self.by_id[73]
+        answer = record["answerHtml"]
+
+        self.assertEqual(
+            record["question"],
+            "Go 中值接收者和指针接收者有什么区别？",
+        )
+        self.assertTrue(
+            answer.startswith("<p><strong>补充整理：</strong>")
+        )
+        for expected_text in (
+            "副本",
+            "不能直接修改原值",
+            "指针接收者",
+            "修改其指向的值",
+            "大型结构体",
+            "T 的方法集",
+            "*T 的方法集",
+            "自动取地址",
+            "接口方法集规则",
+            "统一使用指针接收者",
+        ):
+            with self.subTest(expected_text=expected_text):
+                self.assertIn(expected_text, answer)
+
+    def test_supplements_89_and_preserves_its_article_question(self):
+        record = self.by_id[89]
+        answer = record["answerHtml"]
+
+        self.assertEqual(record["question"], "如何优化内存使用？")
+        self.assertTrue(
+            answer.startswith("<p><strong>补充整理：</strong>")
+        )
+        for expected_text in (
+            "pprof",
+            "-benchmem",
+            "分配",
+            "存活引用",
+            "预分配",
+            "slice",
+            "map",
+            "strings.Builder",
+            "转换",
+            "堆逃逸",
+            "流式",
+            "sync.Pool",
+            "临时复用对象",
+            "基准测试",
+        ):
+            with self.subTest(expected_text=expected_text):
+                self.assertIn(expected_text, answer)
+
+    def test_supplements_90_and_preserves_its_article_question(self):
+        record = self.by_id[90]
+        answer = record["answerHtml"]
+
+        self.assertEqual(record["question"], "如何优化垃圾回收？")
+        self.assertTrue(
+            answer.startswith("<p><strong>补充整理：</strong>")
+        )
+        for expected_text in (
+            "分配速率",
+            "存活堆",
+            "pprof",
+            "GC 指标",
+            "GOGC",
+            "GOMEMLIMIT",
+            "runtime.GC()",
+            "请求路径",
+            "CPU",
+            "内存",
+            "压测",
+        ):
+            with self.subTest(expected_text=expected_text):
+                self.assertIn(expected_text, answer)
+
+    def test_render_is_deterministic_and_uses_the_file_global_contract(self):
+        first = render_questions_js(self.questions)
+        second = render_questions_js(build_questions(self.source_html))
+
+        self.assertEqual(first, second)
+        self.assertTrue(first.startswith(
+            "// [skill: go-team-standards · dev-dna] "
+            "生成可离线加载的安全题库\n"
+            "// Generated by scripts/build_questions.py; do not edit.\n"
+            "window.GO_INTERVIEW_QUESTIONS = Object.freeze(\n"
+        ))
+        self.assertTrue(first.endswith(");\n"))
+
+    def test_rendered_output_has_no_remote_resource_or_executable_html(self):
+        output = render_questions_js(self.questions)
+
+        for forbidden in (
+            "<script",
+            "</script",
+            "<iframe",
+            "javascript:",
+            "onerror=",
+            "onload=",
+            "fetch(",
+            "import(",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, output.lower())
+        self.assertIsNone(
+            re.search(r"<[^>]+\s(?:src|href)\s*=", output, re.IGNORECASE)
+        )
+
+        unsafe = copy.deepcopy(self.questions)
+        unsafe[0]["answerHtml"] = "<script>alert(1)</script>"
+        with self.assertRaises(ValueError):
+            render_questions_js(unsafe)
+
+    def test_cli_writes_the_expected_file_and_reports_the_range(self):
+        expected_output = render_questions_js(self.questions)
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            source_path = Path(temporary_directory) / "source.html"
+            output_path = (
+                Path(temporary_directory) / "data" / "questions.js"
+            )
+            source_path.write_text(self.source_html, encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts" / "build_questions.py"),
+                    str(source_path),
+                    str(output_path),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(
+                result.stdout,
+                "built 100 questions: 1..100\n",
+            )
+            self.assertEqual(
+                output_path.read_text(encoding="utf-8"),
+                expected_output,
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()
