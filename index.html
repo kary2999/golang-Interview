@@ -1,36 +1,45 @@
 <!doctype html>
-<!-- [skill: go-team-standards · dev-dna] 提供可离线运行的语义化刷题页面 -->
+<!-- [skill: go-team-standards · dev-dna] 提供 B1 每日闯关冲刺的语义化离线界面 -->
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#6857e5">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Go 冲刺营">
   <meta
     name="description"
-    content="无需安装、可离线使用的 Go 面试随机刷题卡片。"
+    content="可离线安装的 Go 面试每日闯关冲刺应用，支持单卡快刷、三级自评与本地进度备份。"
   >
-  <title>Go 面试随身练</title>
+  <title>Go 面试冲刺营</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="assets/icons/icon-192.png">
   <link rel="stylesheet" href="assets/styles.css">
 </head>
 <body>
   <a class="skip-link" href="#question-text">跳到当前题目</a>
 
   <main id="app" class="app-shell">
-    <header class="site-header">
-      <div class="brand">
-        <p class="brand-kicker">GOLANG INTERVIEW</p>
-        <h1>Go 面试随身练</h1>
-        <p class="brand-description">一次专注一道题，按自己的节奏复习。</p>
+    <header class="app-header">
+      <div class="brand-lockup">
+        <span class="brand-mark" aria-hidden="true">GO</span>
+        <div>
+          <p class="brand-kicker">DAILY SPRINT</p>
+          <h1>Go 面试冲刺营</h1>
+        </div>
       </div>
 
-      <div class="mode-switch" role="group" aria-label="选择复习模式">
+      <nav class="mode-switch" aria-label="训练模式">
         <button
           id="mode-all"
           class="mode-button"
           type="button"
           aria-pressed="true"
         >
-          全部题目
+          随机刷题
         </button>
         <button
           id="mode-hard"
@@ -38,63 +47,155 @@
           type="button"
           aria-pressed="false"
         >
-          只看不会
+          待复习
+          <span
+            id="hard-count"
+            class="mode-count"
+            aria-live="polite"
+            aria-atomic="true"
+          >0</span>
+        </button>
+        <button
+          id="achievements-button"
+          class="mode-button"
+          type="button"
+          aria-haspopup="dialog"
+          aria-controls="achievements-dialog"
+          aria-expanded="false"
+        >
+          成就
+        </button>
+        <button
+          class="mode-button mode-button-soon"
+          type="button"
+          aria-disabled="true"
+          title="题目分类将在后续版本上线"
+          disabled
+        >
+          分类即将上线
+        </button>
+      </nav>
+
+      <div class="header-tools">
+        <button
+          id="install-button"
+          class="utility-button"
+          type="button"
+          aria-label="安装 Go 面试冲刺营"
+          aria-haspopup="dialog"
+          aria-controls="install-help"
+          aria-expanded="false"
+          hidden
+        >
+          安装应用
+        </button>
+        <button
+          id="progress-button"
+          class="utility-button"
+          type="button"
+          aria-haspopup="dialog"
+          aria-controls="progress-dialog"
+          aria-expanded="false"
+        >
+          进度管理
         </button>
       </div>
     </header>
 
-    <div
-      id="storage-warning"
-      class="notice notice-warning"
-      role="status"
-      aria-live="polite"
-      hidden
-    ></div>
-    <div
-      id="app-error"
-      class="notice notice-error"
-      role="alert"
-      hidden
-    ></div>
+    <section class="stats-strip" aria-label="学习状态">
+      <div class="stat-item">
+        <span class="stat-icon" aria-hidden="true">◆</span>
+        <p>
+          <span class="stat-label">连续学习</span>
+          <strong><span id="study-streak">0</span> 天</strong>
+        </p>
+      </div>
 
-    <section class="study-status" aria-label="本轮学习进度">
-      <div class="progress-copy">
-        <span id="progress-text" class="progress-text">0 / 0</span>
-        <span id="hard-count" class="hard-count" aria-live="polite">
-          不会题 0
-        </span>
+      <div class="xp-status">
+        <div class="xp-copy">
+          <strong id="level-text">Lv. 1</strong>
+          <span id="xp-text" aria-live="polite">0 / 1000 XP</span>
+        </div>
+        <div
+          class="xp-track"
+          role="progressbar"
+          aria-label="等级经验"
+          aria-valuemin="0"
+          aria-valuemax="1000"
+          aria-valuenow="0"
+          aria-valuetext="0 / 1000 XP"
+        >
+          <span id="xp-fill" class="xp-fill"></span>
+        </div>
+      </div>
+
+      <div class="stat-item">
+        <span class="stat-icon" aria-hidden="true">●</span>
+        <p>
+          <span class="stat-label">今日训练</span>
+          <strong><span id="daily-count">0</span> 题</strong>
+        </p>
+      </div>
+
+      <div class="stat-item">
+        <span class="stat-icon" aria-hidden="true">↗</span>
+        <p>
+          <span class="stat-label">连续掌握</span>
+          <strong><span id="mastery-combo">0</span> 题</strong>
+        </p>
+      </div>
+    </section>
+
+    <div class="notice-stack" aria-label="应用通知">
+      <div
+        id="app-error"
+        class="notice notice-error"
+        role="alert"
+        hidden
+      ></div>
+      <div
+        id="storage-warning"
+        class="notice notice-warning"
+        role="status"
+        aria-live="polite"
+        hidden
+      ></div>
+      <div
+        id="update-notice"
+        class="notice notice-update"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        hidden
+      >
+        <span>新版本已准备好，可在保存当前进度后更新。</span>
+        <button class="notice-action" type="button" data-update-action>
+          保存并更新
+        </button>
       </div>
       <div
-        id="progress-bar"
-        class="progress-track"
-        role="progressbar"
-        aria-label="本轮学习进度"
-        aria-valuemin="0"
-        aria-valuemax="1"
-        aria-valuenow="0"
-        aria-valuetext="正在加载题库"
-      >
-        <span id="progress-fill" class="progress-fill"></span>
-      </div>
-      <button
-        id="reshuffle-button"
-        class="text-button"
-        type="button"
-        aria-label="重新随机排列本轮题目"
-      >
-        重新洗牌
-      </button>
-    </section>
+        id="round-summary"
+        class="notice notice-summary"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        hidden
+      ></div>
+    </div>
 
     <section
       id="empty-state"
       class="empty-state"
+      aria-labelledby="empty-state-title"
       aria-live="polite"
       hidden
     >
       <span class="empty-icon" aria-hidden="true">✓</span>
-      <h2>还没有标记“不会”的题目</h2>
-      <p>切回“全部题目”，遇到需要复习的内容时点击“标记不会”。</p>
+      <div>
+        <p class="eyebrow">待复习已清空</p>
+        <h2 id="empty-state-title">这一轮没有需要回看的题</h2>
+        <p>回到“随机刷题”继续冲刺；遇到不熟悉的题，可随时加入待复习。</p>
+      </div>
     </section>
 
     <article
@@ -102,12 +203,36 @@
       class="question-card"
       aria-labelledby="question-text"
     >
-      <header class="question-meta">
-        <p id="question-number" class="question-number">正在加载</p>
-        <span id="source-badge" class="source-badge" hidden>补充整理</span>
+      <header class="question-header">
+        <div class="question-meta">
+          <p id="question-number" class="question-number">正在加载题库</p>
+          <span id="source-badge" class="source-badge" hidden>补充整理</span>
+        </div>
+        <p id="progress-text" class="progress-text">本轮 0 / 0</p>
       </header>
 
-      <h2 id="question-text" class="question-text">题库加载中…</h2>
+      <div
+        id="progress-bar"
+        class="progress-track"
+        role="progressbar"
+        aria-label="本轮唯一题进度"
+        aria-valuemin="0"
+        aria-valuemax="1"
+        aria-valuenow="0"
+        aria-valuetext="正在加载题库"
+      >
+        <span id="progress-fill" class="progress-fill"></span>
+      </div>
+
+      <div class="question-body">
+        <p class="eyebrow">先在心里作答</p>
+        <h2 id="question-text" class="question-text" tabindex="-1">
+          题库加载中…
+        </h2>
+        <p class="recall-hint">
+          尝试说出关键点，再揭晓参考答案。跳过不会获得 XP。
+        </p>
+      </div>
 
       <section
         id="answer-panel"
@@ -116,11 +241,52 @@
         aria-live="polite"
         hidden
       >
-        <h3 id="answer-heading" class="answer-heading">参考答案</h3>
+        <header class="answer-heading-row">
+          <p class="eyebrow">对照与补充</p>
+          <h3 id="answer-heading">参考答案</h3>
+        </header>
         <div id="answer-content" class="answer-content"></div>
       </section>
 
-      <footer class="card-actions" aria-label="题目操作">
+      <section
+        id="rating-panel"
+        class="rating-panel"
+        aria-labelledby="rating-heading"
+        hidden
+      >
+        <div class="rating-copy">
+          <p class="eyebrow">完成自评后自动进入下一题</p>
+          <h3 id="rating-heading">这题掌握得怎么样？</h3>
+        </div>
+        <div class="rating-controls">
+          <button id="rate-hard" class="rating-button rate-hard" type="button">
+            <span class="rating-name">不会</span>
+            <small>+2 XP · 7 题后再练</small>
+          </button>
+          <button id="rate-fuzzy" class="rating-button rate-fuzzy" type="button">
+            <span class="rating-name">模糊</span>
+            <small>+8 XP · 20 题后再练</small>
+          </button>
+          <button
+            id="rate-mastered"
+            class="rating-button rate-mastered"
+            type="button"
+          >
+            <span class="rating-name">掌握</span>
+            <small>+20 XP · 移出待复习</small>
+          </button>
+        </div>
+        <p
+          id="rating-feedback"
+          class="rating-feedback"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          hidden
+        ></p>
+      </section>
+
+      <footer class="card-actions" aria-label="题目导航与作答">
         <button
           id="previous-button"
           class="action-button action-secondary"
@@ -134,18 +300,18 @@
           id="answer-button"
           class="action-button action-primary"
           type="button"
-          aria-controls="answer-panel"
+          aria-controls="answer-panel rating-panel"
           aria-expanded="false"
         >
-          显示答案
+          揭晓参考答案
         </button>
         <button
           id="next-button"
           class="action-button action-secondary"
           type="button"
-          aria-label="下一题"
+          aria-label="跳过当前题并前往下一题"
         >
-          下一题
+          跳过 / 下一题
           <span aria-hidden="true">→</span>
         </button>
       </footer>
@@ -154,20 +320,141 @@
     <section
       id="review-actions"
       class="review-actions"
-      aria-label="复习标记"
+      aria-label="本轮辅助操作"
     >
-      <button
-        id="hard-button"
-        class="hard-button"
-        type="button"
-        aria-pressed="false"
-      >
-        标记不会
-      </button>
+      <div class="review-buttons">
+        <button
+          id="hard-button"
+          class="review-button hard-button"
+          type="button"
+          aria-pressed="false"
+        >
+          加入待复习
+        </button>
+        <button
+          id="reshuffle-button"
+          class="review-button"
+          type="button"
+          aria-label="开始新的随机轮次并保留闯关进度"
+        >
+          重新洗牌
+        </button>
+      </div>
       <p class="keyboard-hint">
-        快捷键：空格显示答案 · ← / → 切题 · J 标记不会
+        快捷键：空格揭晓 · 1 / 2 / 3 自评 · ← / → 切题 · J 待复习
       </p>
     </section>
+
+    <dialog
+      id="achievements-dialog"
+      class="app-dialog achievements-dialog"
+      aria-labelledby="achievements-title"
+    >
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow">里程碑</p>
+          <h2 id="achievements-title">我的成就</h2>
+        </div>
+        <form method="dialog">
+          <button class="dialog-close" type="submit" aria-label="关闭成就面板">
+            ×
+          </button>
+        </form>
+      </div>
+      <p class="dialog-intro">成就由真实练习数据自动计算，不会单独保存。</p>
+      <ul id="achievements-list" class="achievements-list" aria-live="polite">
+        <li>完成第一次自评，点亮首枚成就。</li>
+      </ul>
+    </dialog>
+
+    <dialog
+      id="install-help"
+      class="app-dialog install-dialog"
+      aria-labelledby="install-help-title"
+    >
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow">安装到设备</p>
+          <h2 id="install-help-title">把冲刺营放到主屏幕</h2>
+        </div>
+        <form method="dialog">
+          <button class="dialog-close" type="submit" aria-label="关闭安装说明">
+            ×
+          </button>
+        </form>
+      </div>
+      <div class="install-steps">
+        <p>
+          iPhone 或 iPad：在 Safari 中打开分享菜单，然后选择“添加到主屏幕”。
+        </p>
+        <p>
+          桌面与 Android：使用浏览器提供的“安装应用”或“添加到主屏幕”入口。
+        </p>
+        <p class="dialog-note">
+          安装仅适用于 HTTPS 或 localhost。直接双击打开时仍可刷题，但不会注册离线应用。
+        </p>
+      </div>
+      <form class="dialog-footer" method="dialog">
+        <button class="action-button action-primary" type="submit">知道了</button>
+      </form>
+    </dialog>
+
+    <dialog
+      id="progress-dialog"
+      class="app-dialog progress-dialog"
+      aria-labelledby="progress-dialog-title"
+    >
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow">本机数据</p>
+          <h2 id="progress-dialog-title">进度管理</h2>
+        </div>
+        <form method="dialog">
+          <button
+            id="progress-dialog-close"
+            class="dialog-close"
+            type="submit"
+            aria-label="关闭进度管理"
+          >
+            ×
+          </button>
+        </form>
+      </div>
+      <p class="dialog-intro">
+        进度保存在当前浏览器。定期导出 JSON，可在另一台设备手动恢复。
+      </p>
+      <div class="progress-actions">
+        <button
+          id="export-button"
+          class="data-action data-action-export"
+          type="button"
+        >
+          导出或分享进度
+          <small>生成不含题目正文的 v2 JSON</small>
+        </button>
+        <label class="data-action data-action-import" for="import-input">
+          导入进度文件
+          <small>选择 JSON，校验后确认替换</small>
+        </label>
+        <input
+          id="import-input"
+          class="file-input"
+          type="file"
+          accept=".json,application/json"
+        >
+        <button
+          id="reset-button"
+          class="data-action data-action-danger"
+          type="button"
+        >
+          重置本机进度
+          <small>清除 XP、连续记录、统计和待复习</small>
+        </button>
+      </div>
+      <p class="dialog-note">
+        导入会在完整校验和你确认后整体替换本机进度，不会自动合并，也不会上传到云端。
+      </p>
+    </dialog>
   </main>
 
   <div

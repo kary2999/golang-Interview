@@ -3,6 +3,7 @@
 
 import json
 import re
+import struct
 import sys
 from html.parser import HTMLParser
 from pathlib import Path
@@ -24,6 +25,50 @@ _REQUIRED_SCRIPT_SOURCES = [
     "assets/app.js",
 ]
 _REQUIRED_STYLESHEET = "assets/styles.css"
+_PWA_MANIFEST_PATH = "manifest.webmanifest"
+_PWA_SERVICE_WORKER_PATH = "service-worker.js"
+_PWA_ICON_SOURCE_PATH = "assets/icons/app-icon.svg"
+_PWA_MANIFEST_FIELDS = {
+    "name": "Go 面试冲刺营",
+    "short_name": "Go 冲刺营",
+    "description": "可离线安装的 Go 面试单卡快刷应用",
+    "lang": "zh-CN",
+    "start_url": "./",
+    "scope": "./",
+    "display": "standalone",
+    "background_color": "#f7f3e9",
+    "theme_color": "#6857e5",
+}
+_PWA_ICONS = [
+    {
+        "src": "assets/icons/icon-192.png",
+        "sizes": "192x192",
+        "type": "image/png",
+    },
+    {
+        "src": "assets/icons/icon-512.png",
+        "sizes": "512x512",
+        "type": "image/png",
+    },
+    {
+        "src": "assets/icons/icon-maskable-512.png",
+        "sizes": "512x512",
+        "type": "image/png",
+        "purpose": "maskable",
+    },
+]
+_PWA_APP_SHELL = [
+    "./",
+    "./index.html",
+    "./assets/styles.css",
+    "./assets/app.js",
+    "./data/questions.js",
+    "./manifest.webmanifest",
+    "./assets/icons/icon-192.png",
+    "./assets/icons/icon-512.png",
+    "./assets/icons/icon-maskable-512.png",
+]
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _REQUIRED_MAINTENANCE_FILES = [
     "AGENTS.md",
     "README.md",
@@ -71,6 +116,14 @@ _RAW_STATIC_PATTERNS = {
     "远程 URL": _REMOTE_URL_RE,
     "CSS @import": re.compile(r"(?i)@import\b"),
 }
+_SERVICE_WORKER_APP_SHELL_RE = re.compile(
+    r"\bconst\s+APP_SHELL\s*=\s*Object\.freeze\(\s*"
+    r"(?P<entries>\[.*?\])\s*\)\s*;",
+    re.DOTALL,
+)
+_SERVICE_WORKER_CACHE_NAME_RE = re.compile(
+    r'\bconst\s+CACHE_NAME\s*=\s*"(?P<name>[^"]+)"\s*;'
+)
 
 
 class VerificationError(RuntimeError):
@@ -323,6 +376,7 @@ class _IndexParser(HTMLParser):
         self.resources = []
         self.scripts = []
         self.stylesheets = []
+        self.manifests = []
         self.inline_script_count = 0
         self.inline_event_attributes = []
 
@@ -358,11 +412,12 @@ class _IndexParser(HTMLParser):
                 self.inline_script_count += 1
             self.scripts.append((source, script_type))
 
-        if (
-            normalized_tag == "link"
-            and attributes.get("rel", "").strip().lower() == "stylesheet"
-        ):
-            self.stylesheets.append(attributes.get("href"))
+        if normalized_tag == "link":
+            relation = attributes.get("rel", "").strip().lower()
+            if relation == "stylesheet":
+                self.stylesheets.append(attributes.get("href"))
+            if "manifest" in relation.split():
+                self.manifests.append(attributes.get("href"))
 
 
 def parse_questions_js(content):
@@ -450,6 +505,7 @@ def _resolve_local_reference(root, value):
         ) from error
     if not resolved.is_file():
         raise VerificationError("页面引用的文件不存在：{}".format(value))
+    return resolved
 
 
 def verify_index(root):
@@ -570,6 +626,364 @@ def verify_static_code(root):
                 )
 
 
+def _iter_json_strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, list):
+        for item in value:
+            yield from _iter_json_strings(item)
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _iter_json_strings(item)
+
+
+def _verify_png(path, expected_size):
+    try:
+        with path.open("rb") as png_file:
+            header = png_file.read(24)
+    except OSError as error:
+        raise VerificationError(
+            "无法读取 PWA 图标 {}".format(path)
+        ) from error
+
+    if len(header) < 24 or header[:8] != _PNG_SIGNATURE:
+        raise VerificationError("{} 不是有效的 PNG 图标".format(path))
+    if header[8:16] != b"\x00\x00\x00\rIHDR":
+        raise VerificationError("{} 缺少有效的 PNG IHDR".format(path))
+
+    try:
+        dimensions = struct.unpack(">II", header[16:24])
+    except struct.error as error:
+        raise VerificationError(
+            "{} 的 PNG 尺寸无法读取".format(path)
+        ) from error
+    if dimensions != expected_size:
+        raise VerificationError(
+            "{} 的 PNG 尺寸必须为 {}x{}".format(
+                path,
+                expected_size[0],
+                expected_size[1],
+            )
+        )
+
+
+def _verify_manifest(root):
+    manifest_path = root / _PWA_MANIFEST_PATH
+    if not manifest_path.is_file():
+        raise VerificationError("缺少 {}".format(_PWA_MANIFEST_PATH))
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise VerificationError("manifest.webmanifest 无法解析") from error
+    if not isinstance(manifest, dict):
+        raise VerificationError("manifest.webmanifest 顶层必须是对象")
+
+    for value in _iter_json_strings(manifest):
+        if _is_remote_reference(value):
+            raise VerificationError(
+                "manifest.webmanifest 包含远程或带协议的资源：{}".format(
+                    value
+                )
+            )
+
+    for field, expected_value in _PWA_MANIFEST_FIELDS.items():
+        if manifest.get(field) != expected_value:
+            raise VerificationError(
+                "manifest.webmanifest 的 {} 必须为 {!r}".format(
+                    field,
+                    expected_value,
+                )
+            )
+
+    if manifest.get("icons") != _PWA_ICONS:
+        raise VerificationError("manifest.webmanifest 图标元数据不正确")
+
+    for icon in _PWA_ICONS:
+        icon_path = _resolve_local_reference(root, icon["src"])
+        width, height = (
+            int(dimension)
+            for dimension in icon["sizes"].split("x", 1)
+        )
+        _verify_png(icon_path, (width, height))
+
+    icon_source = root / _PWA_ICON_SOURCE_PATH
+    if not icon_source.is_file():
+        raise VerificationError(
+            "缺少可维护图标源文件 {}".format(_PWA_ICON_SOURCE_PATH)
+        )
+
+
+def _verify_manifest_link(root):
+    index_path = root / "index.html"
+    if not index_path.is_file():
+        raise VerificationError("缺少 index.html")
+
+    parser = _IndexParser()
+    try:
+        content = index_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise VerificationError("index.html 无法读取 PWA 元数据") from error
+    try:
+        parser.feed(content)
+        parser.close()
+    except Exception as error:
+        raise VerificationError("index.html 无法解析 PWA 元数据") from error
+
+    if parser.manifests != [_PWA_MANIFEST_PATH]:
+        raise VerificationError(
+            "index.html 必须且只能引用 manifest.webmanifest"
+        )
+
+
+def _require_service_worker_pattern(source, pattern, message):
+    if re.search(pattern, source, re.DOTALL) is None:
+        raise VerificationError(message)
+
+
+def _verify_service_worker(root):
+    worker_path = root / _PWA_SERVICE_WORKER_PATH
+    if not worker_path.is_file():
+        raise VerificationError("缺少 {}".format(_PWA_SERVICE_WORKER_PATH))
+
+    try:
+        source = worker_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise VerificationError("service-worker.js 无法读取") from error
+    executable_source, resource_source = _lex_javascript_masks(source)
+
+    remote_match = _REMOTE_URL_RE.search(resource_source)
+    if remote_match is not None:
+        raise VerificationError(
+            "service-worker.js:{} 包含远程 URL".format(
+                source.count("\n", 0, remote_match.start()) + 1
+            )
+        )
+
+    for label, pattern in _EXECUTABLE_JAVASCRIPT_PATTERNS.items():
+        if label == "fetch 调用":
+            continue
+        match = pattern.search(executable_source)
+        if match is not None:
+            raise VerificationError(
+                "service-worker.js:{} 包含不允许的{}".format(
+                    executable_source.count(
+                        "\n",
+                        0,
+                        match.start(),
+                    ) + 1,
+                    label,
+                )
+            )
+    if re.search(r"\bimportScripts\s*\(", executable_source):
+        raise VerificationError("service-worker.js 禁止 importScripts")
+
+    shell_matches = list(
+        _SERVICE_WORKER_APP_SHELL_RE.finditer(source)
+    )
+    if len(shell_matches) != 1:
+        raise VerificationError(
+            "service-worker.js 必须声明唯一受控的 APP_SHELL"
+        )
+    try:
+        app_shell = json.loads(shell_matches[0].group("entries"))
+    except json.JSONDecodeError as error:
+        raise VerificationError(
+            "service-worker.js 的 APP_SHELL 无法解析"
+        ) from error
+    if app_shell != _PWA_APP_SHELL:
+        raise VerificationError(
+            "service-worker.js 的 APP_SHELL 条目不完整或不受控"
+        )
+
+    cache_matches = list(_SERVICE_WORKER_CACHE_NAME_RE.finditer(source))
+    if len(cache_matches) != 1:
+        raise VerificationError(
+            "service-worker.js 必须声明唯一 CACHE_NAME"
+        )
+    cache_name = cache_matches[0].group("name")
+    if re.fullmatch(r"go-interview-v[1-9][0-9]*", cache_name) is None:
+        raise VerificationError(
+            "service-worker.js 缓存名必须是版本化 go-interview 缓存"
+        )
+
+    listener_patterns = {
+        event_name: re.compile(
+            r"self\.addEventListener\s*\(\s*[\"']{}[\"']".format(
+                event_name
+            )
+        )
+        for event_name in ("install", "activate", "fetch", "message")
+    }
+    listener_positions = {}
+    for event_name, pattern in listener_patterns.items():
+        matches = list(pattern.finditer(source))
+        if len(matches) != 1:
+            raise VerificationError(
+                "service-worker.js 必须声明唯一 {} 处理器".format(
+                    event_name
+                )
+            )
+        listener_positions[event_name] = matches[0].start()
+
+    install_start = listener_positions["install"]
+    activate_start = listener_positions["activate"]
+    fetch_start = listener_positions["fetch"]
+    message_start = listener_positions["message"]
+    if not (
+        install_start < activate_start < fetch_start < message_start
+    ):
+        raise VerificationError(
+            "service-worker.js 生命周期处理器顺序不受控"
+        )
+
+    install_source = source[install_start:activate_start]
+    _require_service_worker_pattern(
+        install_source,
+        r"event\.waitUntil\s*\(",
+        "Service Worker install 必须等待预缓存完成",
+    )
+    _require_service_worker_pattern(
+        install_source,
+        r"caches\s*\.\s*open\s*\(\s*CACHE_NAME\s*\)",
+        "Service Worker install 必须打开当前版本缓存",
+    )
+    _require_service_worker_pattern(
+        install_source,
+        r"cache\.addAll\s*\(\s*APP_SHELL\s*\)",
+        "Service Worker install 必须原子预缓存完整应用壳",
+    )
+    if re.search(
+        r"\.catch\s*\(",
+        _mask_javascript_non_code(install_source),
+    ):
+        raise VerificationError(
+            "Service Worker install 不得吞掉预缓存失败"
+        )
+
+    activate_source = source[activate_start:fetch_start]
+    activate_requirements = {
+        "activate 必须读取缓存列表": (
+            r"caches\s*\.\s*keys\s*\(\s*\)"
+        ),
+        "activate 必须限定 go-interview 缓存": (
+            r'cacheName\.startsWith\s*\(\s*"go-interview-"\s*\)'
+        ),
+        "activate 必须保留当前版本缓存": (
+            r"cacheName\s*!==\s*CACHE_NAME"
+        ),
+        "activate 必须删除旧缓存": (
+            r"caches\.delete\s*\(\s*cacheName\s*\)"
+        ),
+        "activate 必须接管现有客户端": (
+            r"self\.clients\.claim\s*\(\s*\)"
+        ),
+    }
+    for message, pattern in activate_requirements.items():
+        _require_service_worker_pattern(
+            activate_source,
+            pattern,
+            "Service Worker {}".format(message),
+        )
+
+    fetch_source = source[fetch_start:message_start]
+    fetch_requirements = {
+        "fetch 必须读取 event.request": (
+            r"const\s+request\s*=\s*event\.request\s*;"
+        ),
+        "fetch 必须解析请求 URL": (
+            r"const\s+url\s*=\s*new\s+URL\s*\(\s*request\.url\s*\)"
+        ),
+        "fetch 必须只处理同源 GET": (
+            r"if\s*\(\s*request\.method\s*!==\s*[\"']GET[\"']\s*"
+            r"\|\|\s*url\.origin\s*!==\s*self\.location\.origin\s*\)"
+        ),
+        "fetch 必须区分页面导航": (
+            r"request\.mode\s*===\s*[\"']navigate[\"']"
+        ),
+        "页面导航必须使用 network-first": (
+            r"networkFirstNavigation\s*\(\s*request\s*\)"
+        ),
+        "静态资源必须使用 cache-first": (
+            r"cacheFirst\s*\(\s*request\s*\)"
+        ),
+    }
+    for message, pattern in fetch_requirements.items():
+        _require_service_worker_pattern(
+            fetch_source,
+            pattern,
+            "Service Worker {}".format(message),
+        )
+    guard_position = re.search(
+        fetch_requirements["fetch 必须只处理同源 GET"],
+        fetch_source,
+        re.DOTALL,
+    ).start()
+    response_position = fetch_source.find("event.respondWith")
+    if response_position < guard_position:
+        raise VerificationError(
+            "Service Worker 必须先校验同源 GET 再拦截请求"
+        )
+
+    message_end = source.find("async function", message_start)
+    if message_end == -1:
+        message_end = len(source)
+    message_source = source[message_start:message_end]
+    _require_service_worker_pattern(
+        message_source,
+        r"event\.data\.type\s*===\s*[\"']SKIP_WAITING[\"']",
+        "Service Worker 只能响应显式 SKIP_WAITING 消息",
+    )
+    if source.count("self.skipWaiting()") != 1:
+        raise VerificationError(
+            "Service Worker 不得自动或重复调用 skipWaiting"
+        )
+    if message_source.find("self.skipWaiting()") == -1:
+        raise VerificationError(
+            "Service Worker skipWaiting 必须位于 message 处理器"
+        )
+
+    navigation_requirements = {
+        "缺少 network-first 导航函数": (
+            r"async\s+function\s+networkFirstNavigation\s*\("
+        ),
+        "导航必须优先请求网络": r"\bfetch\s*\(\s*request\s*\)",
+        "导航失败必须捕获错误": r"\bcatch\s*\(",
+        "导航失败必须回退缓存首页": (
+            r"cache\.match\s*\(\s*[\"']\./index\.html[\"']\s*\)"
+        ),
+        "缺少 cache-first 静态资源函数": (
+            r"async\s+function\s+cacheFirst\s*\("
+        ),
+        "静态资源必须先查缓存": (
+            r"caches\.match\s*\(\s*request\s*\)"
+        ),
+    }
+    for message, pattern in navigation_requirements.items():
+        _require_service_worker_pattern(source, pattern, message)
+
+    fetch_calls = list(re.finditer(r"\bfetch\s*\(", executable_source))
+    allowed_fetch_call = re.compile(
+        r"\bfetch\s*\(\s*request\s*\)"
+    )
+    for fetch_call in fetch_calls:
+        if allowed_fetch_call.match(
+            executable_source,
+            fetch_call.start(),
+        ) is None:
+            raise VerificationError(
+                "service-worker.js 只能 fetch 当前同源 event.request"
+            )
+
+
+def verify_pwa(root):
+    """Verify install metadata, local icons, and scoped offline caching."""
+    root = Path(root)
+    _verify_manifest(root)
+    _verify_manifest_link(root)
+    _verify_service_worker(root)
+
+
 def _verify_markdown_marker(path):
     first_lines = path.read_text(encoding="utf-8").splitlines()[:10]
     if not any(
@@ -635,6 +1049,7 @@ def verify_project(root):
     verify_question_records(records)
     verify_index(root)
     verify_static_code(root)
+    verify_pwa(root)
     verify_required_files(root)
     return {
         "questions": len(records),
@@ -652,7 +1067,7 @@ def _main():
 
     print(
         "verified {} questions; {} supplemented; "
-        "offline resources and AI maintenance OK".format(
+        "offline resources, PWA, and AI maintenance OK".format(
             summary["questions"],
             summary["supplemented"],
         )

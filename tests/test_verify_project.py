@@ -1,9 +1,13 @@
 # [skill: go-team-standards · dev-dna] 验证仓库级离线与维护约束
 import copy
+import json
+import struct
 import sys
 import tempfile
 import unittest
+import zlib
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -14,10 +18,122 @@ from scripts.verify_project import (
     _mask_javascript_non_code,
     parse_questions_js,
     verify_index,
+    verify_pwa,
+    verify_project,
     verify_question_records,
     verify_required_files,
     verify_static_code,
 )
+
+
+VALID_MANIFEST = {
+    "name": "Go 面试冲刺营",
+    "short_name": "Go 冲刺营",
+    "description": "可离线安装的 Go 面试单卡快刷应用",
+    "lang": "zh-CN",
+    "start_url": "./",
+    "scope": "./",
+    "display": "standalone",
+    "background_color": "#f7f3e9",
+    "theme_color": "#6857e5",
+    "icons": [
+        {
+            "src": "assets/icons/icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+        },
+        {
+            "src": "assets/icons/icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+        },
+        {
+            "src": "assets/icons/icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable",
+        },
+    ],
+}
+
+VALID_SERVICE_WORKER = """// Local test fixture
+const CACHE_NAME = "go-interview-v2";
+const APP_SHELL = Object.freeze([
+  "./",
+  "./index.html",
+  "./assets/styles.css",
+  "./assets/app.js",
+  "./data/questions.js",
+  "./manifest.webmanifest",
+  "./assets/icons/icon-192.png",
+  "./assets/icons/icon-512.png",
+  "./assets/icons/icon-maskable-512.png"
+]);
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches
+      .open(CACHE_NAME)
+      .then((cache) => cache.addAll(APP_SHELL))
+  );
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches
+      .keys()
+      .then((cacheNames) => Promise.all(
+        cacheNames
+          .filter((cacheName) => (
+            cacheName.startsWith("go-interview-")
+            && cacheName !== CACHE_NAME
+          ))
+          .map((cacheName) => caches.delete(cacheName))
+      ))
+      .then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener("fetch", (event) => {
+  const request = event.request;
+  const url = new URL(request.url);
+  if (request.method !== "GET" || url.origin !== self.location.origin) {
+    return;
+  }
+  if (request.mode === "navigate") {
+    event.respondWith(networkFirstNavigation(request));
+    return;
+  }
+  event.respondWith(cacheFirst(request));
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
+});
+
+async function networkFirstNavigation(request) {
+  const cache = await caches.open(CACHE_NAME);
+  try {
+    return await fetch(request);
+  } catch (error) {
+    const fallback = await cache.match("./index.html");
+    if (fallback) {
+      return fallback;
+    }
+    throw error;
+  }
+}
+
+async function cacheFirst(request) {
+  const cached = await caches.match(request);
+  if (cached) {
+    return cached;
+  }
+  return fetch(request);
+}
+"""
 
 
 def valid_questions():
@@ -38,8 +154,32 @@ def valid_questions():
     return records
 
 
+def write_png(path, width, height):
+    def chunk(chunk_type, payload):
+        checksum = zlib.crc32(chunk_type + payload) & 0xFFFFFFFF
+        return (
+            struct.pack(">I", len(payload))
+            + chunk_type
+            + payload
+            + struct.pack(">I", checksum)
+        )
+
+    header = struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)
+    scanlines = b"".join(
+        b"\x00" + (b"\x00" * width)
+        for _ in range(height)
+    )
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(scanlines))
+        + chunk(b"IEND", b"")
+    )
+
+
 def write_valid_page(root):
     (root / "assets").mkdir(parents=True)
+    (root / "assets" / "icons").mkdir()
     (root / "data").mkdir()
     (root / "assets" / "styles.css").write_text(
         "/* [skill: go-team-standards · dev-dna] 离线样式 */\n",
@@ -53,10 +193,31 @@ def write_valid_page(root):
         render_questions_js(valid_questions()),
         encoding="utf-8",
     )
+    (root / "manifest.webmanifest").write_text(
+        json.dumps(VALID_MANIFEST, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (root / "service-worker.js").write_text(
+        VALID_SERVICE_WORKER,
+        encoding="utf-8",
+    )
+    (root / "assets" / "icons" / "app-icon.svg").write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" '
+        'viewBox="0 0 512 512"></svg>\n',
+        encoding="utf-8",
+    )
+    write_png(root / "assets" / "icons" / "icon-192.png", 192, 192)
+    write_png(root / "assets" / "icons" / "icon-512.png", 512, 512)
+    write_png(
+        root / "assets" / "icons" / "icon-maskable-512.png",
+        512,
+        512,
+    )
     (root / "index.html").write_text(
         """<!doctype html>
 <html lang="zh-CN">
 <head>
+  <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="assets/styles.css">
 </head>
 <body>
@@ -299,6 +460,184 @@ class VerifyProjectTest(unittest.TestCase):
                         encoding="utf-8",
                     )
                     verify_static_code(root)
+
+    def test_pwa_contract_accepts_valid_local_resources(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            write_valid_page(root)
+
+            verify_pwa(root)
+
+    def test_pwa_contract_requires_exact_manifest_essentials(self):
+        invalid_values = {
+            "name": "Other app",
+            "short_name": "Other",
+            "lang": "en",
+            "start_url": "/",
+            "scope": "/",
+            "display": "browser",
+            "background_color": "#ffffff",
+            "theme_color": "#000000",
+        }
+        for field, invalid_value in invalid_values.items():
+            with self.subTest(field=field):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    root = Path(temporary_directory)
+                    write_valid_page(root)
+                    manifest_path = root / "manifest.webmanifest"
+                    manifest = json.loads(
+                        manifest_path.read_text(encoding="utf-8")
+                    )
+                    manifest[field] = invalid_value
+                    manifest_path.write_text(
+                        json.dumps(manifest, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+
+                    with self.assertRaises(VerificationError):
+                        verify_pwa(root)
+
+    def test_pwa_contract_rejects_remote_manifest_urls(self):
+        mutations = {
+            "remote start URL": lambda manifest: manifest.update(
+                {"start_url": "https://example.com/"}
+            ),
+            "remote scope": lambda manifest: manifest.update(
+                {"scope": "https://example.com/"}
+            ),
+            "remote icon": lambda manifest: manifest["icons"][0].update(
+                {"src": "https://example.com/icon.png"}
+            ),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    root = Path(temporary_directory)
+                    write_valid_page(root)
+                    manifest_path = root / "manifest.webmanifest"
+                    manifest = json.loads(
+                        manifest_path.read_text(encoding="utf-8")
+                    )
+                    mutate(manifest)
+                    manifest_path.write_text(
+                        json.dumps(manifest, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+
+                    with self.assertRaises(VerificationError):
+                        verify_pwa(root)
+
+    def test_pwa_contract_rejects_missing_or_wrong_icons(self):
+        mutations = {
+            "missing icon": lambda path: path.unlink(),
+            "wrong signature": lambda path: path.write_bytes(b"not a PNG"),
+            "wrong dimensions": lambda path: write_png(path, 191, 192),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    root = Path(temporary_directory)
+                    write_valid_page(root)
+                    icon_path = (
+                        root / "assets" / "icons" / "icon-192.png"
+                    )
+                    mutate(icon_path)
+
+                    with self.assertRaises(VerificationError):
+                        verify_pwa(root)
+
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            write_valid_page(root)
+            manifest_path = root / "manifest.webmanifest"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["icons"][2]["purpose"] = "any"
+            manifest_path.write_text(
+                json.dumps(manifest, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(VerificationError):
+                verify_pwa(root)
+
+    def test_service_worker_rejects_remote_or_uncontrolled_cache_entries(self):
+        mutations = {
+            "remote entry": lambda source: source.replace(
+                '  "./assets/app.js",\n',
+                '  "https://example.com/app.js",\n',
+            ),
+            "missing shell entry": lambda source: source.replace(
+                '  "./data/questions.js",\n',
+                "",
+            ),
+            "extra shell entry": lambda source: source.replace(
+                '  "./manifest.webmanifest",\n',
+                '  "./manifest.webmanifest",\n  "./extra.js",\n',
+            ),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    root = Path(temporary_directory)
+                    write_valid_page(root)
+                    worker_path = root / "service-worker.js"
+                    worker_path.write_text(
+                        mutate(worker_path.read_text(encoding="utf-8")),
+                        encoding="utf-8",
+                    )
+
+                    with self.assertRaises(VerificationError):
+                        verify_pwa(root)
+
+    def test_service_worker_requires_same_origin_get_interception(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            write_valid_page(root)
+            worker_path = root / "service-worker.js"
+            worker_path.write_text(
+                worker_path.read_text(encoding="utf-8").replace(
+                    (
+                        'request.method !== "GET" '
+                        '|| url.origin !== self.location.origin'
+                    ),
+                    'request.method !== "GET"',
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(VerificationError):
+                verify_pwa(root)
+
+    def test_pwa_contract_rejects_absent_pwa_files(self):
+        for relative_path in (
+            "manifest.webmanifest",
+            "service-worker.js",
+            "assets/icons/app-icon.svg",
+        ):
+            with self.subTest(relative_path=relative_path):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    root = Path(temporary_directory)
+                    write_valid_page(root)
+                    (root / relative_path).unlink()
+
+                    with self.assertRaises(VerificationError):
+                        verify_pwa(root)
+
+    def test_complete_project_verification_calls_pwa_verifier(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            write_valid_page(root)
+
+            with (
+                mock.patch(
+                    "scripts.verify_project.verify_pwa",
+                    wraps=verify_pwa,
+                ) as pwa_verifier,
+                mock.patch("scripts.verify_project.verify_required_files"),
+            ):
+                verify_project(root)
+
+            pwa_verifier.assert_called_once_with(root)
 
     def test_required_maintenance_files_and_cursor_rule_are_enforced(self):
         required_files = [

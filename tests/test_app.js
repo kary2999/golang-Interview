@@ -1,4 +1,5 @@
 // [skill: go-team-standards · dev-dna] 验证离线题库的状态与导航契约
+// [skill: code-review v2] 已自检 · 覆盖状态、存储、交互与 PWA 边界
 "use strict";
 
 const assert = require("node:assert/strict");
@@ -7,13 +8,29 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  LEGACY_STORAGE_KEY,
+  MAX_ACTIVITY_DAYS,
+  MAX_HISTORY_LENGTH,
+  MAX_IMPORT_BYTES,
+  RATING_CONFIG,
   STATE_VERSION,
+  STORAGE_KEY,
+  applyRating,
+  canRegisterServiceWorker,
+  createExportPayload,
   createInitialState,
+  createProgressExport,
+  deriveAchievements,
+  deriveLevel,
   getActiveDeck,
+  getCurrentQuestionId,
   loadStoredState,
+  migrateLegacyState,
   navigateIndex,
   normalizeQuestions,
   normalizeState,
+  parseImportPayload,
+  parseProgressImport,
   saveStoredState,
   shuffle,
   startBrowserApp,
@@ -21,6 +38,36 @@ const {
 } = require("../assets/app.js");
 
 const ROOT = path.resolve(__dirname, "..");
+
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function deepFreeze(value) {
+  Object.freeze(value);
+  for (const nested of Object.values(value)) {
+    if (nested !== null && typeof nested === "object" && !Object.isFrozen(nested)) {
+      deepFreeze(nested);
+    }
+  }
+  return value;
+}
+
+function makeStorage(initialEntries = {}) {
+  const values = new Map(Object.entries(initialEntries));
+  const writes = [];
+  return {
+    getItem(key) {
+      return values.has(key) ? values.get(key) : null;
+    },
+    setItem(key, value) {
+      writes.push([key, value]);
+      values.set(key, value);
+    },
+    values,
+    writes,
+  };
+}
 
 function makeQuestions() {
   return [
@@ -46,18 +93,33 @@ function makeQuestions() {
 }
 
 class FakeElement {
-  constructor(id) {
+  constructor(id, tagName = "") {
     this.id = id;
     this.attributes = new Map();
+    this.children = [];
+    this.clickCount = 0;
     this.disabled = false;
+    this.files = [];
+    this.focusCount = 0;
     this.hidden = false;
+    this.href = "";
     this.innerHTML = "";
     this.isContentEditable = false;
     this.listeners = new Map();
+    this.open = false;
     this.parentElement = null;
     this.style = {};
-    this.tagName = id.endsWith("button") ? "BUTTON" : "DIV";
+    this.tagName = tagName || (
+      id.endsWith("button") || id.startsWith("rate-")
+        ? "BUTTON"
+        : id === "import-input"
+          ? "INPUT"
+          : id.endsWith("dialog")
+            ? "DIALOG"
+            : "DIV"
+    );
     this.textContent = "";
+    this.value = "";
   }
 
   addEventListener(type, listener) {
@@ -66,21 +128,70 @@ class FakeElement {
     this.listeners.set(type, listeners);
   }
 
+  append(...children) {
+    for (const child of children) {
+      child.parentElement = this;
+      this.children.push(child);
+    }
+  }
+
+  close() {
+    this.open = false;
+    this.hidden = true;
+  }
+
   click() {
     if (this.disabled) {
       return;
     }
+    this.clickCount += 1;
     for (const listener of this.listeners.get("click") || []) {
-      listener({ target: this });
+      listener({
+        currentTarget: this,
+        preventDefault() {},
+        target: this,
+      });
     }
+  }
+
+  focus() {
+    this.focusCount += 1;
+  }
+
+  async dispatch(type, overrides = {}) {
+    const event = {
+      currentTarget: this,
+      preventDefault() {},
+      target: this,
+      ...overrides,
+    };
+    await Promise.all(
+      (this.listeners.get(type) || []).map((listener) => listener(event)),
+    );
+    return event;
   }
 
   getAttribute(name) {
     return this.attributes.get(name) ?? null;
   }
 
+  remove() {
+    if (this.parentElement === null) {
+      return;
+    }
+    this.parentElement.children = this.parentElement.children.filter(
+      (child) => child !== this,
+    );
+    this.parentElement = null;
+  }
+
   setAttribute(name, value) {
     this.attributes.set(name, String(value));
+  }
+
+  showModal() {
+    this.open = true;
+    this.hidden = false;
   }
 }
 
@@ -89,9 +200,24 @@ function makeFakeDocument() {
     "app",
     "app-error",
     "storage-warning",
+    "update-notice",
+    "update-action",
+    "round-summary",
+    "install-button",
+    "install-help",
+    "progress-button",
     "mode-all",
     "mode-hard",
     "hard-count",
+    "achievements-button",
+    "achievements-dialog",
+    "achievements-list",
+    "level-text",
+    "xp-text",
+    "xp-fill",
+    "study-streak",
+    "daily-count",
+    "mastery-combo",
     "progress-text",
     "progress-bar",
     "progress-fill",
@@ -101,6 +227,11 @@ function makeFakeDocument() {
     "question-text",
     "answer-panel",
     "answer-content",
+    "rating-panel",
+    "rate-hard",
+    "rate-fuzzy",
+    "rate-mastered",
+    "rating-feedback",
     "empty-state",
     "previous-button",
     "answer-button",
@@ -108,14 +239,47 @@ function makeFakeDocument() {
     "hard-button",
     "reshuffle-button",
     "review-actions",
+    "progress-dialog",
+    "progress-dialog-close",
+    "export-button",
+    "import-input",
+    "reset-button",
     "live-region",
   ];
   const elements = new Map(
     ids.map((id) => [id, new FakeElement(id)]),
   );
+  const listeners = new Map();
+  const body = new FakeElement("body", "BODY");
   return {
-    addEventListener() {},
-    body: new FakeElement("body"),
+    addEventListener(type, listener) {
+      const current = listeners.get(type) || [];
+      current.push(listener);
+      listeners.set(type, current);
+    },
+    body,
+    createElement(tagName) {
+      return new FakeElement(tagName, tagName.toUpperCase());
+    },
+    async dispatch(type, overrides = {}) {
+      const event = {
+        altKey: false,
+        ctrlKey: false,
+        defaultPrevented: false,
+        key: "",
+        metaKey: false,
+        preventDefault() {
+          this.defaultPrevented = true;
+        },
+        shiftKey: false,
+        target: body,
+        ...overrides,
+      };
+      await Promise.all(
+        (listeners.get(type) || []).map((listener) => listener(event)),
+      );
+      return event;
+    },
     elements,
     getElementById(id) {
       return elements.get(id) || null;
@@ -128,6 +292,88 @@ function makeFakeDocument() {
         (element) => element.tagName === "BUTTON",
       );
     },
+    querySelector(selector) {
+      if (selector === "[data-update-action]") {
+        return elements.get("update-action");
+      }
+      return null;
+    },
+  };
+}
+
+function makeBrowserGlobal({
+  questions = makeQuestions(),
+  reducedMotion = false,
+  standalone = false,
+  storage = makeStorage(),
+  protocol = "file:",
+  hostname = "",
+  userAgent = "Desktop Browser",
+} = {}) {
+  const listeners = new Map();
+  const timers = [];
+  const navigator = {
+    standalone,
+    userAgent,
+  };
+  return {
+    GO_INTERVIEW_QUESTIONS: questions,
+    Blob: class FakeBlob {
+      constructor(parts, options) {
+        this.parts = parts;
+        this.type = options.type;
+      }
+    },
+    File: class FakeFile {
+      constructor(parts, name, options) {
+        this.name = name;
+        this.parts = parts;
+        this.type = options.type;
+      }
+    },
+    URL: {
+      createObjectURL() {
+        return "blob:progress";
+      },
+      revokeObjectURL() {},
+    },
+    addEventListener(type, listener) {
+      const current = listeners.get(type) || [];
+      current.push(listener);
+      listeners.set(type, current);
+    },
+    async dispatch(type, overrides = {}) {
+      const event = {
+        preventDefault() {},
+        ...overrides,
+      };
+      await Promise.all(
+        (listeners.get(type) || []).map((listener) => listener(event)),
+      );
+      return event;
+    },
+    localStorage: storage,
+    location: { hostname, protocol },
+    matchMedia(query) {
+      return {
+        matches: query.includes("reduced-motion")
+          ? reducedMotion
+          : standalone,
+      };
+    },
+    navigator,
+    runTimers() {
+      while (timers.length > 0) {
+        const timer = timers.shift();
+        timer.callback();
+      }
+    },
+    setTimeout(callback, delay = 0) {
+      timers.push({ callback, delay });
+      return timers.length;
+    },
+    storage,
+    timers,
   };
 }
 
@@ -142,57 +388,650 @@ test("shuffle returns every item once without mutating the input", () => {
   assert.notDeepEqual(result, original);
 });
 
+test("v2 initial state starts an infinite all-question round", () => {
+  const state = createInitialState([1, 2, 3], () => 0);
+
+  assert.equal(STATE_VERSION, 2);
+  assert.equal(STORAGE_KEY, "go-interview-progress-v2");
+  assert.equal(LEGACY_STORAGE_KEY, "go-interview-progress-v1");
+  assert.equal(MAX_HISTORY_LENGTH, 200);
+  assert.equal(MAX_ACTIVITY_DAYS, 400);
+  assert.equal(Object.isFrozen(RATING_CONFIG), true);
+  assert.equal(Object.isFrozen(RATING_CONFIG.hard), true);
+  assert.deepEqual(RATING_CONFIG, {
+    hard: { xp: 2, reviewAfter: 7 },
+    fuzzy: { xp: 8, reviewAfter: 20 },
+    mastered: { xp: 20, reviewAfter: null },
+  });
+  assert.deepEqual(state.deck, [2, 3, 1]);
+  assert.equal(state.deckIndex, 1);
+  assert.deepEqual(state.views, {
+    all: {
+      currentQuestionId: 2,
+      history: [2],
+      historyIndex: 0,
+    },
+    hard: {
+      deck: [],
+      index: 0,
+    },
+  });
+  assert.deepEqual(state.hardIds, []);
+  assert.deepEqual(state.reviewQueue, []);
+  assert.equal(state.ratingCount, 0);
+  assert.deepEqual(state.round, {
+    number: 1,
+    seenIds: [2],
+    xpEarned: 0,
+    ratings: {
+      hard: 0,
+      fuzzy: 0,
+      mastered: 0,
+    },
+  });
+  assert.deepEqual(state.profile, {
+    totalXp: 0,
+    masteryCombo: 0,
+    studyStreakDays: 0,
+    longestStudyStreakDays: 0,
+    lastPracticeAt: null,
+  });
+  assert.deepEqual(state.activityDays, []);
+  assert.deepEqual(state.questionStats, {});
+  assert.equal(getCurrentQuestionId(state), 2);
+});
+
+test("ratings award repeat XP and replace deterministic review schedules", () => {
+  const initial = createInitialState([1], () => 0);
+  const questionId = getCurrentQuestionId(initial);
+  const hard = applyRating(
+    initial,
+    "hard",
+    [1],
+    "2026-08-09T09:00:00.000Z",
+    () => 0,
+  );
+
+  assert.deepEqual(hard.outcome, {
+    xpEarned: 2,
+    leveledUp: false,
+    roundCompleted: true,
+  });
+  assert.equal(hard.state.profile.totalXp, 2);
+  assert.deepEqual(hard.state.hardIds, [questionId]);
+  assert.deepEqual(hard.state.reviewQueue, [{
+    questionId,
+    dueAfterRatingCount: 8,
+  }]);
+
+  const fuzzy = applyRating(
+    hard.state,
+    "fuzzy",
+    [1],
+    "2026-08-09T09:01:00.000Z",
+    () => 0,
+  );
+
+  assert.equal(fuzzy.outcome.xpEarned, 8);
+  assert.equal(fuzzy.state.profile.totalXp, 10);
+  assert.deepEqual(fuzzy.state.reviewQueue, [{
+    questionId,
+    dueAfterRatingCount: 22,
+  }]);
+  assert.deepEqual(fuzzy.state.questionStats[String(questionId)], {
+    attempts: 2,
+    hardCount: 1,
+    fuzzyCount: 1,
+    masteredCount: 0,
+    lastRating: "fuzzy",
+    lastReviewedAt: "2026-08-09T09:01:00.000Z",
+  });
+});
+
+test("mastered rating removes hard state and increments mastery combo", () => {
+  const initial = createInitialState([1], () => 0);
+  const hard = applyRating(
+    initial,
+    "hard",
+    [1],
+    "2026-08-09T09:00:00.000Z",
+    () => 0,
+  ).state;
+  const mastered = applyRating(
+    hard,
+    "mastered",
+    [1],
+    "2026-08-09T09:01:00.000Z",
+    () => 0,
+  );
+
+  assert.equal(mastered.state.profile.totalXp, 22);
+  assert.equal(mastered.state.profile.masteryCombo, 1);
+  assert.deepEqual(mastered.state.hardIds, []);
+  assert.deepEqual(mastered.state.reviewQueue, []);
+  assert.deepEqual(mastered.state.views.hard, { deck: [], index: 0 });
+});
+
+test("a first fuzzy rating joins review mode on the 20-rating schedule", () => {
+  const initial = createInitialState([1, 2, 3], () => 0);
+  const questionId = getCurrentQuestionId(initial);
+
+  const fuzzy = applyRating(
+    initial,
+    "fuzzy",
+    [1, 2, 3],
+    "2026-08-09T09:00:00.000Z",
+    () => 0,
+  ).state;
+
+  assert.deepEqual(fuzzy.hardIds, [questionId]);
+  assert.deepEqual(fuzzy.views.hard.deck, [questionId]);
+  assert.deepEqual(fuzzy.reviewQueue, [{
+    questionId,
+    dueAfterRatingCount: 21,
+  }]);
+});
+
+test("every repeated rating earns XP", () => {
+  let state = createInitialState([1], () => 0);
+  state = applyRating(
+    state,
+    "mastered",
+    [1],
+    "2026-08-09T09:00:00.000Z",
+    () => 0,
+  ).state;
+  state = applyRating(
+    state,
+    "mastered",
+    [1],
+    "2026-08-09T09:01:00.000Z",
+    () => 0,
+  ).state;
+
+  assert.equal(state.profile.totalXp, 40);
+  assert.equal(state.ratingCount, 2);
+  assert.equal(state.questionStats["1"].attempts, 2);
+  assert.equal(state.questionStats["1"].masteredCount, 2);
+});
+
+test("round stats accumulate while non-mastered ratings reset the combo", () => {
+  const ids = [1, 2, 3];
+  let state = createInitialState(ids, () => 0);
+  state = applyRating(
+    state,
+    "mastered",
+    ids,
+    "2026-08-09T09:00:00.000Z",
+    () => 0,
+  ).state;
+  assert.equal(state.profile.masteryCombo, 1);
+  assert.equal(state.round.xpEarned, 20);
+  assert.equal(state.round.ratings.mastered, 1);
+
+  state = applyRating(
+    state,
+    "fuzzy",
+    ids,
+    "2026-08-09T09:01:00.000Z",
+    () => 0,
+  ).state;
+  assert.equal(state.profile.masteryCombo, 0);
+  assert.equal(state.round.xpEarned, 28);
+  assert.deepEqual(state.round.ratings, {
+    hard: 0,
+    fuzzy: 1,
+    mastered: 1,
+  });
+});
+
+test("reviews become due after the configured subsequent ratings", () => {
+  const ids = Array.from({ length: 10 }, (_, index) => index + 1);
+  let state = createInitialState(ids, () => 0);
+  const reviewQuestionId = getCurrentQuestionId(state);
+
+  state = applyRating(
+    state,
+    "hard",
+    ids,
+    "2026-08-09T09:00:00.000Z",
+    () => 0,
+  ).state;
+  for (let index = 0; index < 6; index += 1) {
+    state = applyRating(
+      state,
+      "mastered",
+      ids,
+      `2026-08-09T09:0${index + 1}:00.000Z`,
+      () => 0,
+    ).state;
+  }
+  assert.notEqual(getCurrentQuestionId(state), reviewQuestionId);
+
+  state = applyRating(
+    state,
+    "mastered",
+    ids,
+    "2026-08-09T09:07:00.000Z",
+    () => 0,
+  ).state;
+
+  assert.equal(state.ratingCount, 8);
+  assert.equal(getCurrentQuestionId(state), reviewQuestionId);
+  assert.equal(
+    state.views.all.history[state.views.all.history.length - 1],
+    reviewQuestionId,
+  );
+});
+
+test("deriveLevel uses fixed 1000 XP levels", () => {
+  assert.deepEqual(deriveLevel(0), {
+    level: 1,
+    currentXp: 0,
+    requiredXp: 1000,
+  });
+  assert.deepEqual(deriveLevel(2680), {
+    level: 3,
+    currentXp: 680,
+    requiredXp: 1000,
+  });
+  assert.throws(() => deriveLevel(-1), TypeError);
+});
+
+test("the tenth local-day rating qualifies once and clock rollback is monotonic", () => {
+  let state = createInitialState([1], () => 0);
+  for (let index = 0; index < 10; index += 1) {
+    state = applyRating(
+      state,
+      "mastered",
+      [1],
+      `2026-08-10T12:${String(index).padStart(2, "0")}:00.000Z`,
+      () => 0,
+    ).state;
+  }
+
+  assert.equal(state.profile.studyStreakDays, 1);
+  assert.equal(state.profile.longestStudyStreakDays, 1);
+  assert.equal(state.activityDays.length, 1);
+  assert.equal(
+    state.activityDays[0].dayStartedAt,
+    new Date(2026, 7, 10).toISOString(),
+  );
+  assert.equal(Object.hasOwn(state.activityDays[0], "date"), false);
+  assert.equal(state.activityDays[0].ratingCount, 10);
+
+  state = applyRating(
+    state,
+    "mastered",
+    [1],
+    "2026-08-10T12:10:00.000Z",
+    () => 0,
+  ).state;
+  assert.equal(state.profile.studyStreakDays, 1);
+
+  const xpBeforeRollback = state.profile.totalXp;
+  const lastPracticeAt = state.profile.lastPracticeAt;
+  state = applyRating(
+    state,
+    "hard",
+    [1],
+    "2026-08-09T12:00:00.000Z",
+    () => 0,
+  ).state;
+  assert.equal(state.profile.totalXp, xpBeforeRollback + 2);
+  assert.equal(state.profile.studyStreakDays, 1);
+  assert.equal(state.profile.longestStudyStreakDays, 1);
+  assert.equal(state.profile.lastPracticeAt, lastPracticeAt);
+});
+
+test("activity history caps at 400 UTC day buckets", () => {
+  let state = createInitialState([1], () => 0);
+  for (let day = 0; day < MAX_ACTIVITY_DAYS + 1; day += 1) {
+    state = applyRating(
+      state,
+      "mastered",
+      [1],
+      new Date(Date.UTC(2025, 0, day + 1, 12)).toISOString(),
+      () => 0,
+    ).state;
+  }
+
+  assert.equal(state.activityDays.length, MAX_ACTIVITY_DAYS);
+  assert.equal(
+    state.activityDays.every(
+      (entry) => (
+        new Date(entry.dayStartedAt).toISOString() === entry.dayStartedAt
+      ),
+    ),
+    true,
+  );
+  assert.equal(
+    state.activityDays.at(-1).ratingCount,
+    1,
+  );
+});
+
+test("seven consecutive qualified local days update current and longest streaks", () => {
+  let state = createInitialState([1], () => 0);
+  for (let day = 1; day <= 7; day += 1) {
+    for (let rating = 0; rating < 10; rating += 1) {
+      state = applyRating(
+        state,
+        "mastered",
+        [1],
+        new Date(2026, 7, day, 12, rating).toISOString(),
+        () => 0,
+      ).state;
+    }
+  }
+
+  assert.equal(state.profile.studyStreakDays, 7);
+  assert.equal(state.profile.longestStudyStreakDays, 7);
+  assert.equal(
+    deriveAchievements(state).some(
+      (achievement) => achievement.id === "seven_days",
+    ),
+    true,
+  );
+});
+
+test("all and hard modes keep separate navigation views", () => {
+  const ids = [1, 2, 3];
+  let state = createInitialState(ids, () => 0);
+  state = applyRating(
+    state,
+    "hard",
+    ids,
+    "2026-08-09T09:00:00.000Z",
+    () => 0,
+  ).state;
+  state = applyRating(
+    state,
+    "hard",
+    ids,
+    "2026-08-09T09:01:00.000Z",
+    () => 0,
+  ).state;
+  const allView = clone(state.views.all);
+  state = { ...state, mode: "hard" };
+  const firstHardId = getCurrentQuestionId(state);
+  const rated = applyRating(
+    state,
+    "fuzzy",
+    ids,
+    "2026-08-09T09:02:00.000Z",
+    () => 0,
+  ).state;
+
+  assert.deepEqual(rated.views.all, allView);
+  assert.notEqual(getCurrentQuestionId(rated), firstHardId);
+  assert.equal(rated.views.hard.index, 1);
+});
+
+test("all-view forward history is reused before consuming the base deck", () => {
+  const ids = [1, 2, 3];
+  let state = createInitialState(ids, () => 0);
+  state = applyRating(
+    state,
+    "mastered",
+    ids,
+    "2026-08-09T09:00:00.000Z",
+    () => 0,
+  ).state;
+  state = applyRating(
+    state,
+    "mastered",
+    ids,
+    "2026-08-09T09:01:00.000Z",
+    () => 0,
+  ).state;
+  const history = state.views.all.history.slice();
+  const deckIndex = state.deckIndex;
+  state = {
+    ...state,
+    views: {
+      ...state.views,
+      all: {
+        ...state.views.all,
+        currentQuestionId: history[0],
+        historyIndex: 0,
+      },
+    },
+  };
+
+  const rated = applyRating(
+    state,
+    "mastered",
+    ids,
+    "2026-08-09T09:02:00.000Z",
+    () => 0,
+  ).state;
+
+  assert.deepEqual(rated.views.all.history, history);
+  assert.equal(rated.views.all.historyIndex, 1);
+  assert.equal(rated.deckIndex, deckIndex);
+});
+
+test("all-view history is capped at 200 actual visits", () => {
+  let state = createInitialState([1], () => 0);
+  for (let index = 0; index < MAX_HISTORY_LENGTH + 5; index += 1) {
+    state = applyRating(
+      state,
+      "mastered",
+      [1],
+      new Date(Date.UTC(2026, 7, 9, 9, index)).toISOString(),
+      () => 0,
+    ).state;
+  }
+
+  assert.equal(state.views.all.history.length, MAX_HISTORY_LENGTH);
+  assert.equal(state.views.all.historyIndex, MAX_HISTORY_LENGTH - 1);
+  assert.equal(new Set(state.deck).size, 1);
+});
+
+test("rolling past a unique deck starts a new round and preserves reviews", () => {
+  const ids = [1, 2, 3];
+  let state = createInitialState(ids, () => 0);
+  const hardId = getCurrentQuestionId(state);
+  state = applyRating(
+    state,
+    "hard",
+    ids,
+    "2026-08-09T09:00:00.000Z",
+    () => 0,
+  ).state;
+  state = applyRating(
+    state,
+    "mastered",
+    ids,
+    "2026-08-09T09:01:00.000Z",
+    () => 0,
+  ).state;
+  const completed = applyRating(
+    state,
+    "mastered",
+    ids,
+    "2026-08-09T09:02:00.000Z",
+    () => 0,
+  );
+
+  assert.equal(completed.outcome.roundCompleted, true);
+  assert.equal(completed.state.round.number, 2);
+  assert.deepEqual(completed.state.round.ratings, {
+    hard: 0,
+    fuzzy: 0,
+    mastered: 0,
+  });
+  assert.deepEqual(completed.state.reviewQueue, [{
+    questionId: hardId,
+    dueAfterRatingCount: 8,
+  }]);
+  assert.equal(completed.state.deck.length, ids.length);
+  assert.equal(new Set(completed.state.deck).size, ids.length);
+  assert.equal(completed.state.deckIndex, 1);
+});
+
+test("achievements are derived from source progress only in fixed order", () => {
+  const state = createInitialState([1, 2, 3], () => 0);
+  state.ratingCount = 100;
+  state.round.number = 2;
+  state.profile.longestStudyStreakDays = 7;
+  state.questionStats = Object.fromEntries(
+    Array.from({ length: 50 }, (_, index) => [
+      String(index + 1),
+      {
+        attempts: 1,
+        hardCount: 0,
+        fuzzyCount: 0,
+        masteredCount: 1,
+        lastRating: "mastered",
+        lastReviewedAt: "2026-08-09T09:00:00.000Z",
+      },
+    ]),
+  );
+
+  assert.deepEqual(
+    deriveAchievements(state).map(
+      ({ id, title, unlocked }) => ({ id, title, unlocked }),
+    ),
+    [
+      { id: "first_rating", title: "初次出发", unlocked: true },
+      { id: "hundred_ratings", title: "百题热身", unlocked: true },
+      { id: "full_round", title: "完整一轮", unlocked: true },
+      { id: "seven_days", title: "坚持一周", unlocked: true },
+      { id: "fifty_mastered", title: "渐入佳境", unlocked: true },
+    ],
+  );
+  assert.equal(Object.hasOwn(state, "achievements"), false);
+});
+
+test("valid v1 state migrates without losing current question or hard IDs", () => {
+  const legacy = {
+    version: 1,
+    mode: "all",
+    deck: [3, 1, 2],
+    index: 1,
+    hardIds: [2],
+  };
+  const migrated = migrateLegacyState(legacy, [1, 2, 3]);
+
+  assert.equal(migrated.version, STATE_VERSION);
+  assert.equal(getCurrentQuestionId(migrated), 1);
+  assert.deepEqual(migrated.deck, legacy.deck);
+  assert.equal(migrated.deckIndex, 2);
+  assert.deepEqual(migrated.views.all.history, [1]);
+  assert.deepEqual(migrated.round.seenIds, [3, 1]);
+  assert.deepEqual(migrated.hardIds, [2]);
+  assert.deepEqual(migrated.views.hard.deck, [2]);
+  assert.equal(migrated.profile.totalXp, 0);
+});
+
 test("normalizeState resets malformed stored state", async (context) => {
   const ids = [1, 2, 3];
+  const valid = createInitialState(ids, () => 0);
+  const rated = applyRating(
+    valid,
+    "hard",
+    ids,
+    "2026-08-09T09:00:00.000Z",
+    () => 0,
+  ).state;
   const malformedStates = {
-    "wrong version": {
-      version: STATE_VERSION + 1,
-      mode: "all",
-      deck: ids,
-      index: 0,
-      hardIds: [],
+    "wrong version": { ...clone(valid), version: STATE_VERSION + 1 },
+    "invalid deck ID": { ...clone(valid), deck: [1, 2, 99] },
+    "duplicate deck ID": { ...clone(valid), deck: [1, 1, 3] },
+    "invalid mode": { ...clone(valid), mode: "unknown" },
+    "out-of-range deck index": { ...clone(valid), deckIndex: ids.length + 1 },
+    "duplicate hard ID": {
+      ...clone(valid),
+      hardIds: [2, 2],
+      views: {
+        ...clone(valid.views),
+        hard: { deck: [2, 2], index: 0 },
+      },
     },
-    "invalid deck ID": {
-      version: STATE_VERSION,
-      mode: "all",
-      deck: [1, 2, 99],
-      index: 0,
-      hardIds: [],
+    "invalid current history ID": {
+      ...clone(valid),
+      views: {
+        ...clone(valid.views),
+        all: {
+          currentQuestionId: 99,
+          history: [99],
+          historyIndex: 0,
+        },
+      },
     },
-    "duplicate deck ID": {
-      version: STATE_VERSION,
+    "duplicate review schedule": {
+      ...clone(valid),
+      reviewQueue: [
+        { questionId: 2, dueAfterRatingCount: 8 },
+        { questionId: 2, dueAfterRatingCount: 9 },
+      ],
+    },
+    "review schedule without review-mode membership": {
+      ...clone(valid),
+      reviewQueue: [{
+        questionId: valid.deck[0],
+        dueAfterRatingCount: 7,
+      }],
+    },
+    "invalid question timestamp": {
+      ...clone(valid),
+      questionStats: {
+        2: {
+          attempts: 1,
+          hardCount: 1,
+          fuzzyCount: 0,
+          masteredCount: 0,
+          lastRating: "hard",
+          lastReviewedAt: "not-a-time",
+        },
+      },
+    },
+    "round ratings exceed global ratings": {
+      ...clone(valid),
+      round: {
+        ...clone(valid.round),
+        xpEarned: 2,
+        ratings: {
+          hard: 1,
+          fuzzy: 0,
+          mastered: 0,
+        },
+      },
+    },
+    "round seen IDs do not match consumed deck": {
+      ...clone(valid),
+      round: {
+        ...clone(valid.round),
+        seenIds: [valid.deck[1]],
+      },
+    },
+    "last rating has no matching count": {
+      ...clone(rated),
+      questionStats: {
+        ...clone(rated.questionStats),
+        [String(valid.views.all.currentQuestionId)]: {
+          ...clone(
+            rated.questionStats[String(valid.views.all.currentQuestionId)],
+          ),
+          lastRating: "mastered",
+        },
+      },
+    },
+    "mastery combo exceeds total ratings": {
+      ...clone(valid),
+      profile: {
+        ...clone(valid.profile),
+        masteryCombo: 1,
+      },
+    },
+    "invalid legacy state": {
+      version: 1,
       mode: "all",
       deck: [1, 1, 3],
       index: 0,
       hardIds: [],
-    },
-    "invalid mode": {
-      version: STATE_VERSION,
-      mode: "unknown",
-      deck: ids,
-      index: 0,
-      hardIds: [],
-    },
-    "out-of-range index": {
-      version: STATE_VERSION,
-      mode: "all",
-      deck: ids,
-      index: ids.length,
-      hardIds: [],
-    },
-    "duplicate hard ID": {
-      version: STATE_VERSION,
-      mode: "all",
-      deck: ids,
-      index: 0,
-      hardIds: [2, 2],
-    },
-    "invalid hard ID": {
-      version: STATE_VERSION,
-      mode: "all",
-      deck: ids,
-      index: 0,
-      hardIds: [99],
     },
   };
 
@@ -203,7 +1042,8 @@ test("normalizeState resets malformed stored state", async (context) => {
       assert.equal(normalized.recovered, true);
       assert.equal(normalized.state.version, STATE_VERSION);
       assert.equal(normalized.state.mode, "all");
-      assert.equal(normalized.state.index, 0);
+      assert.equal(normalized.state.deckIndex, 1);
+      assert.equal(normalized.state.views.all.historyIndex, 0);
       assert.deepEqual(normalized.state.hardIds, []);
       assert.deepEqual(
         normalized.state.deck.slice().sort((left, right) => left - right),
@@ -213,13 +1053,40 @@ test("normalizeState resets malformed stored state", async (context) => {
   }
 });
 
+test("applyRating does not mutate its input state", () => {
+  const initial = createInitialState([1, 2, 3], () => 0);
+  const snapshot = clone(initial);
+  deepFreeze(initial);
+
+  const rated = applyRating(
+    initial,
+    "hard",
+    [1, 2, 3],
+    "2026-08-09T09:00:00.000Z",
+    () => 0,
+  );
+
+  assert.deepEqual(initial, snapshot);
+  assert.notEqual(rated.state, initial);
+  assert.notEqual(rated.state.views, initial.views);
+  assert.notEqual(rated.state.profile, initial.profile);
+  assert.notEqual(rated.state.questionStats, initial.questionStats);
+});
+
 test("hard mode filters the stable round deck in deck order", () => {
+  const initial = createInitialState([1, 2, 3, 4], () => 0);
   const state = {
-    version: STATE_VERSION,
+    ...initial,
     mode: "hard",
     deck: [4, 2, 1, 3],
-    index: 0,
     hardIds: [1, 4],
+    views: {
+      ...initial.views,
+      hard: {
+        deck: [4, 1],
+        index: 0,
+      },
+    },
   };
 
   assert.deepEqual(getActiveDeck(state), [4, 1]);
@@ -234,49 +1101,76 @@ test("navigation wraps in both directions and handles an empty deck", () => {
 });
 
 test("hard-ID toggling adds once, removes cleanly, and clamps hard mode", () => {
+  const base = createInitialState([1, 2, 3], () => 0);
   const initial = {
-    version: STATE_VERSION,
+    ...base,
     mode: "hard",
-    deck: [1, 2, 3],
-    index: 1,
     hardIds: [1, 2],
+    views: {
+      ...base.views,
+      hard: {
+        deck: [1, 2],
+        index: 1,
+      },
+    },
   };
 
   const removed = toggleHardId(initial, 2);
   assert.deepEqual(removed.hardIds, [1]);
-  assert.equal(removed.index, 0);
+  assert.equal(removed.views.hard.index, 0);
   assert.deepEqual(initial.hardIds, [1, 2]);
 
   const added = toggleHardId(removed, 3);
   assert.deepEqual(added.hardIds, [1, 3]);
+  assert.deepEqual(added.views.hard.deck, [1, 3]);
+  assert.deepEqual(added.reviewQueue, [{
+    questionId: 3,
+    dueAfterRatingCount: 7,
+  }]);
   assert.equal(new Set(added.hardIds).size, added.hardIds.length);
+});
+
+test("removing another hard ID preserves the hard-view current question", () => {
+  const base = createInitialState([1, 2, 3], () => 0);
+  const state = {
+    ...base,
+    hardIds: [1, 2, 3],
+    views: {
+      ...base.views,
+      hard: {
+        deck: [1, 2, 3],
+        index: 1,
+      },
+    },
+  };
+
+  const removed = toggleHardId(state, 1);
+
+  assert.deepEqual(removed.views.hard.deck, [2, 3]);
+  assert.equal(removed.views.hard.index, 0);
+  assert.equal(removed.views.hard.deck[removed.views.hard.index], 2);
 });
 
 test("removing the last hard question resets and hides review controls", () => {
   const documentObject = makeFakeDocument();
+  const initial = createInitialState([1], () => 0);
+  const marked = toggleHardId(initial, 1);
   const storedState = {
-    version: STATE_VERSION,
+    ...marked,
     mode: "hard",
-    deck: [1],
-    index: 0,
-    hardIds: [1],
   };
-  const browserGlobal = {
-    GO_INTERVIEW_QUESTIONS: [makeQuestions()[0]],
-    localStorage: {
-      getItem() {
-        return JSON.stringify(storedState);
-      },
-      setItem() {},
-    },
-    setTimeout(callback) {
-      callback();
-    },
-  };
+  const storage = makeStorage({
+    [STORAGE_KEY]: JSON.stringify(storedState),
+  });
+  const browserGlobal = makeBrowserGlobal({
+    questions: [makeQuestions()[0]],
+    reducedMotion: true,
+    storage,
+  });
 
   startBrowserApp(documentObject, browserGlobal);
   const hardButton = documentObject.elements.get("hard-button");
-  assert.equal(hardButton.textContent, "取消不会");
+  assert.equal(hardButton.textContent, "移出待复习");
   assert.equal(hardButton.getAttribute("aria-pressed"), "true");
 
   hardButton.click();
@@ -285,8 +1179,532 @@ test("removing the last hard question resets and hides review controls", () => {
   assert.equal(documentObject.elements.get("question-card").hidden, true);
   assert.equal(documentObject.elements.get("review-actions").hidden, true);
   assert.equal(hardButton.disabled, true);
-  assert.equal(hardButton.textContent, "标记不会");
+  assert.equal(hardButton.textContent, "加入待复习");
   assert.equal(hardButton.getAttribute("aria-pressed"), "false");
+});
+
+test("browser reveal exposes ratings and a rating awards XP after 300 ms", () => {
+  const documentObject = makeFakeDocument();
+  const initial = createInitialState([1, 2, 3], () => 0);
+  const storage = makeStorage({
+    [STORAGE_KEY]: JSON.stringify(initial),
+  });
+  const browserGlobal = makeBrowserGlobal({ storage });
+
+  startBrowserApp(documentObject, browserGlobal);
+
+  const answerPanel = documentObject.elements.get("answer-panel");
+  const ratingPanel = documentObject.elements.get("rating-panel");
+  assert.equal(answerPanel.hidden, true);
+  assert.equal(ratingPanel.hidden, true);
+
+  documentObject.elements.get("answer-button").click();
+  assert.equal(answerPanel.hidden, false);
+  assert.equal(ratingPanel.hidden, false);
+  browserGlobal.runTimers();
+
+  documentObject.elements.get("rate-hard").click();
+  assert.equal(
+    browserGlobal.timers.some((timer) => timer.delay === 300),
+    true,
+  );
+  assert.equal(storage.writes.length, 1);
+  assert.equal(
+    JSON.parse(storage.writes[0][1]).profile.totalXp,
+    2,
+  );
+  assert.equal(documentObject.elements.get("answer-button").disabled, true);
+  assert.equal(documentObject.elements.get("next-button").disabled, true);
+
+  browserGlobal.runTimers();
+  const persisted = JSON.parse(storage.writes.at(-1)[1]);
+  assert.equal(storage.writes.length, 1);
+  assert.equal(persisted.profile.totalXp, 2);
+  assert.equal(persisted.ratingCount, 1);
+  assert.equal(answerPanel.hidden, true);
+  assert.equal(ratingPanel.hidden, true);
+  assert.equal(documentObject.elements.get("question-text").focusCount, 1);
+  assert.match(
+    documentObject.elements.get("live-region").textContent,
+    /\+2 XP/,
+  );
+});
+
+test("rating feedback is visible and a completed round gets a summary", () => {
+  const documentObject = makeFakeDocument();
+  const initial = createInitialState([1], () => 0);
+  const storage = makeStorage({
+    [STORAGE_KEY]: JSON.stringify(initial),
+  });
+  const browserGlobal = makeBrowserGlobal({
+    questions: [makeQuestions()[0]],
+    storage,
+  });
+
+  startBrowserApp(documentObject, browserGlobal);
+  documentObject.elements.get("answer-button").click();
+  browserGlobal.runTimers();
+  documentObject.elements.get("rate-hard").click();
+
+  const feedback = documentObject.elements.get("rating-feedback");
+  assert.equal(feedback.hidden, false);
+  assert.match(feedback.textContent, /不会.*\+2 XP/);
+
+  browserGlobal.runTimers();
+  const summary = documentObject.elements.get("round-summary");
+  assert.equal(summary.hidden, false);
+  assert.match(summary.textContent, /本轮完成/);
+  assert.match(summary.textContent, /不会 1/);
+  assert.match(summary.textContent, /2 XP/);
+});
+
+test("reduced motion advances immediately and renders sprint profile", () => {
+  const documentObject = makeFakeDocument();
+  const initial = createInitialState([1, 2, 3], () => 0);
+  const storage = makeStorage({
+    [STORAGE_KEY]: JSON.stringify(initial),
+  });
+  const browserGlobal = makeBrowserGlobal({
+    reducedMotion: true,
+    storage,
+  });
+
+  startBrowserApp(documentObject, browserGlobal);
+  documentObject.elements.get("progress-button").click();
+  assert.equal(documentObject.elements.get("progress-dialog").open, true);
+  documentObject.elements.get("progress-dialog").close();
+  documentObject.elements.get("answer-button").click();
+  documentObject.elements.get("rate-mastered").click();
+
+  const persisted = JSON.parse(storage.writes.at(-1)[1]);
+  assert.equal(persisted.profile.totalXp, 20);
+  assert.match(
+    documentObject.elements.get("level-text").textContent,
+    /1/,
+  );
+  assert.match(
+    documentObject.elements.get("xp-text").textContent,
+    /20\s*\/\s*1000/,
+  );
+  assert.equal(
+    documentObject.elements.get("xp-fill").style.width,
+    "2%",
+  );
+  assert.match(
+    documentObject.elements.get("mastery-combo").textContent,
+    /1/,
+  );
+  assert.match(
+    documentObject.elements.get("achievements-list").textContent,
+    /初次出发/,
+  );
+  assert.equal(documentObject.elements.get("study-streak").textContent, "0");
+  assert.equal(documentObject.elements.get("daily-count").textContent, "1");
+});
+
+test("keyboard shortcuts rate only revealed answers and ignore controls", async () => {
+  const documentObject = makeFakeDocument();
+  const initial = createInitialState([1, 2, 3], () => 0);
+  const storage = makeStorage({
+    [STORAGE_KEY]: JSON.stringify(initial),
+  });
+  const browserGlobal = makeBrowserGlobal({
+    reducedMotion: true,
+    storage,
+  });
+  startBrowserApp(documentObject, browserGlobal);
+
+  const hiddenRating = await documentObject.dispatch("keydown", { key: "1" });
+  assert.equal(hiddenRating.defaultPrevented, false);
+  assert.equal(storage.writes.length, 0);
+
+  const reveal = await documentObject.dispatch("keydown", { key: " " });
+  assert.equal(reveal.defaultPrevented, true);
+  assert.equal(documentObject.elements.get("answer-panel").hidden, false);
+
+  const nestedControl = new FakeElement("nested");
+  nestedControl.parentElement = documentObject.elements.get("answer-button");
+  const ignored = await documentObject.dispatch("keydown", {
+    key: "1",
+    target: nestedControl,
+  });
+  assert.equal(ignored.defaultPrevented, false);
+  assert.equal(storage.writes.length, 0);
+
+  const marked = await documentObject.dispatch("keydown", { key: "j" });
+  assert.equal(marked.defaultPrevented, true);
+  assert.equal(JSON.parse(storage.writes.at(-1)[1]).hardIds.length, 1);
+  assert.equal(documentObject.elements.get("hard-count").textContent, "1");
+
+  const modified = await documentObject.dispatch("keydown", {
+    ctrlKey: true,
+    key: "j",
+  });
+  assert.equal(modified.defaultPrevented, false);
+  assert.equal(storage.writes.length, 1);
+
+  const rated = await documentObject.dispatch("keydown", { key: "2" });
+  assert.equal(rated.defaultPrevented, true);
+  assert.equal(JSON.parse(storage.writes.at(-1)[1]).profile.totalXp, 8);
+});
+
+test("supplemented source badge follows the current question", () => {
+  const documentObject = makeFakeDocument();
+  const initial = createInitialState([1, 2, 3], () => 0);
+  const storage = makeStorage({
+    [STORAGE_KEY]: JSON.stringify(initial),
+  });
+  const browserGlobal = makeBrowserGlobal({ storage });
+  startBrowserApp(documentObject, browserGlobal);
+
+  const badge = documentObject.elements.get("source-badge");
+  assert.equal(badge.hidden, true);
+  documentObject.elements.get("next-button").click();
+  assert.equal(badge.hidden, false);
+  assert.equal(
+    documentObject.elements.get("question-number").textContent,
+    "第 3 题",
+  );
+});
+
+test("install prompt is deferred to a click and iOS help is contextual", async () => {
+  const documentObject = makeFakeDocument();
+  const initial = createInitialState([1, 2, 3], () => 0);
+  const storage = makeStorage({
+    [STORAGE_KEY]: JSON.stringify(initial),
+  });
+  const browserGlobal = makeBrowserGlobal({
+    hostname: "example.test",
+    protocol: "https:",
+    storage,
+    userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)",
+  });
+  startBrowserApp(documentObject, browserGlobal);
+
+  const installButton = documentObject.elements.get("install-button");
+  const installHelp = documentObject.elements.get("install-help");
+  assert.equal(installButton.hidden, false);
+  assert.equal(installHelp.hidden, false);
+  await installButton.dispatch("click");
+  assert.equal(installHelp.open, true);
+  installHelp.close();
+
+  let prevented = false;
+  let promptCalls = 0;
+  await browserGlobal.dispatch("beforeinstallprompt", {
+    preventDefault() {
+      prevented = true;
+    },
+    prompt() {
+      promptCalls += 1;
+    },
+    userChoice: Promise.resolve({ outcome: "accepted" }),
+  });
+  assert.equal(prevented, true);
+  assert.equal(promptCalls, 0);
+  assert.equal(installButton.hidden, false);
+
+  await installButton.dispatch("click");
+  assert.equal(promptCalls, 1);
+  assert.equal(installButton.hidden, true);
+
+  const fileDocument = makeFakeDocument();
+  const fileBrowser = makeBrowserGlobal({
+    storage: makeStorage({
+      [STORAGE_KEY]: JSON.stringify(initial),
+    }),
+    userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)",
+  });
+  startBrowserApp(fileDocument, fileBrowser);
+  assert.equal(
+    fileDocument.elements.get("install-button").hidden,
+    true,
+  );
+});
+
+test("service worker registers only in secure contexts and surfaces updates", async () => {
+  const initial = createInitialState([1, 2, 3], () => 0);
+
+  const fileDocument = makeFakeDocument();
+  const fileBrowser = makeBrowserGlobal({
+    storage: makeStorage({
+      [STORAGE_KEY]: JSON.stringify(initial),
+    }),
+  });
+  let fileRegistrations = 0;
+  fileBrowser.navigator.serviceWorker = {
+    register() {
+      fileRegistrations += 1;
+    },
+  };
+  startBrowserApp(fileDocument, fileBrowser);
+  await Promise.resolve();
+  assert.equal(fileRegistrations, 0);
+
+  const secureDocument = makeFakeDocument();
+  const secureBrowser = makeBrowserGlobal({
+    hostname: "example.test",
+    protocol: "https:",
+    storage: makeStorage({
+      [STORAGE_KEY]: JSON.stringify(initial),
+    }),
+  });
+  let registeredPath = "";
+  let controllerChange = null;
+  let reloads = 0;
+  let skipWaitingMessages = 0;
+  const waitingWorker = {
+    postMessage(message) {
+      if (message.type === "SKIP_WAITING") {
+        skipWaitingMessages += 1;
+      }
+    },
+  };
+  secureBrowser.location.reload = () => {
+    reloads += 1;
+  };
+  secureBrowser.navigator.serviceWorker = {
+    addEventListener(type, listener) {
+      if (type === "controllerchange") {
+        controllerChange = listener;
+      }
+    },
+    controller: {},
+    async register(pathname) {
+      registeredPath = pathname;
+      return {
+        addEventListener() {},
+        waiting: waitingWorker,
+      };
+    },
+  };
+
+  startBrowserApp(secureDocument, secureBrowser);
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(registeredPath, "./service-worker.js");
+  assert.equal(
+    secureDocument.elements.get("update-notice").hidden,
+    false,
+  );
+
+  secureDocument.elements.get("answer-button").click();
+  secureDocument.elements.get("update-action").click();
+  assert.equal(skipWaitingMessages, 0);
+  assert.equal(reloads, 0);
+
+  secureDocument.elements.get("answer-button").click();
+  secureDocument.elements.get("update-action").click();
+  assert.equal(skipWaitingMessages, 1);
+  assert.equal(reloads, 0);
+  controllerChange();
+  assert.equal(reloads, 1);
+});
+
+test("service-worker eligibility is HTTPS or localhost HTTP only", () => {
+  const supported = { serviceWorker: {} };
+
+  assert.equal(
+    canRegisterServiceWorker(
+      { hostname: "example.test", protocol: "https:" },
+      supported,
+    ),
+    true,
+  );
+  assert.equal(
+    canRegisterServiceWorker(
+      { hostname: "localhost", protocol: "http:" },
+      supported,
+    ),
+    true,
+  );
+  assert.equal(
+    canRegisterServiceWorker(
+      { hostname: "example.test", protocol: "http:" },
+      supported,
+    ),
+    false,
+  );
+  assert.equal(
+    canRegisterServiceWorker(
+      { hostname: "", protocol: "file:" },
+      supported,
+    ),
+    false,
+  );
+  assert.equal(
+    canRegisterServiceWorker(
+      { hostname: "example.test", protocol: "https:" },
+      {},
+    ),
+    false,
+  );
+});
+
+test("a synchronous service-worker registration failure is nonblocking", () => {
+  const documentObject = makeFakeDocument();
+  const initial = createInitialState([1, 2, 3], () => 0);
+  const browserGlobal = makeBrowserGlobal({
+    hostname: "localhost",
+    protocol: "http:",
+    storage: makeStorage({
+      [STORAGE_KEY]: JSON.stringify(initial),
+    }),
+  });
+  browserGlobal.navigator.serviceWorker = {
+    register() {
+      throw new Error("registration blocked");
+    },
+  };
+
+  assert.doesNotThrow(() => startBrowserApp(documentObject, browserGlobal));
+  assert.equal(documentObject.elements.get("question-card").hidden, false);
+  assert.match(
+    documentObject.elements.get("question-text").textContent,
+    /问题/,
+  );
+});
+
+test("update activation stops when in-memory progress cannot be saved", async () => {
+  const documentObject = makeFakeDocument();
+  const browserGlobal = makeBrowserGlobal({
+    hostname: "example.test",
+    protocol: "https:",
+    storage: {
+      getItem() {
+        return null;
+      },
+      setItem() {
+        throw new Error("storage blocked");
+      },
+    },
+  });
+  let skipWaitingMessages = 0;
+  browserGlobal.navigator.serviceWorker = {
+    addEventListener() {},
+    controller: {},
+    async register() {
+      return {
+        addEventListener() {},
+        waiting: {
+          postMessage() {
+            skipWaitingMessages += 1;
+          },
+        },
+      };
+    },
+  };
+
+  startBrowserApp(documentObject, browserGlobal);
+  await Promise.resolve();
+  await Promise.resolve();
+  documentObject.elements.get("update-action").click();
+
+  assert.equal(skipWaitingMessages, 0);
+  assert.match(
+    documentObject.elements.get("storage-warning").textContent,
+    /无法保存/,
+  );
+});
+
+test("browser export prefers file sharing and falls back to a download", async () => {
+  const initial = createInitialState([1, 2, 3], () => 0);
+
+  const shareDocument = makeFakeDocument();
+  const shareBrowser = makeBrowserGlobal({
+    storage: makeStorage({
+      [STORAGE_KEY]: JSON.stringify(initial),
+    }),
+  });
+  let shared = null;
+  shareBrowser.navigator.canShare = ({ files }) => files.length === 1;
+  shareBrowser.navigator.share = async (payload) => {
+    shared = payload;
+  };
+  startBrowserApp(shareDocument, shareBrowser);
+
+  await shareDocument.elements.get("export-button").dispatch("click");
+  assert.equal(shared.files.length, 1);
+  assert.match(shared.files[0].name, /^go-interview-progress-.*\.json$/);
+
+  const downloadDocument = makeFakeDocument();
+  let anchor = null;
+  const originalCreateElement = downloadDocument.createElement;
+  downloadDocument.createElement = (tagName) => {
+    const element = originalCreateElement(tagName);
+    if (tagName === "a") {
+      anchor = element;
+    }
+    return element;
+  };
+  const downloadBrowser = makeBrowserGlobal({
+    storage: makeStorage({
+      [STORAGE_KEY]: JSON.stringify(initial),
+    }),
+  });
+  startBrowserApp(downloadDocument, downloadBrowser);
+  await downloadDocument.elements.get("export-button").dispatch("click");
+
+  assert.equal(anchor.clickCount, 1);
+  assert.match(anchor.download, /^go-interview-progress-.*\.json$/);
+  assert.equal(anchor.href, "blob:progress");
+});
+
+test("browser import confirms valid replacement and rejects invalid input", async () => {
+  const documentObject = makeFakeDocument();
+  const initial = createInitialState([1, 2, 3], () => 0);
+  const imported = applyRating(
+    initial,
+    "mastered",
+    [1, 2, 3],
+    "2026-08-09T09:00:00.000Z",
+    () => 0,
+  ).state;
+  const serialized = JSON.stringify(
+    createExportPayload(imported, "2026-08-09T09:01:00.000Z"),
+  );
+  const storage = makeStorage({
+    [STORAGE_KEY]: JSON.stringify(initial),
+  });
+  const browserGlobal = makeBrowserGlobal({ storage });
+  let confirmations = 0;
+  browserGlobal.confirm = () => {
+    confirmations += 1;
+    return true;
+  };
+  startBrowserApp(documentObject, browserGlobal);
+
+  const importInput = documentObject.elements.get("import-input");
+  importInput.files = [{
+    size: Buffer.byteLength(serialized),
+    async text() {
+      return serialized;
+    },
+  }];
+  await importInput.dispatch("change");
+
+  assert.equal(confirmations, 1);
+  assert.equal(JSON.parse(storage.writes.at(-1)[1]).profile.totalXp, 20);
+  assert.match(
+    documentObject.elements.get("xp-text").textContent,
+    /20\s*\/\s*1000/,
+  );
+
+  const writesBeforeInvalid = storage.writes.length;
+  importInput.files = [{
+    size: 7,
+    async text() {
+      return "{broken";
+    },
+  }];
+  await importInput.dispatch("change");
+  assert.equal(confirmations, 1);
+  assert.equal(storage.writes.length, writesBeforeInvalid);
+  assert.equal(
+    documentObject.elements.get("storage-warning").hidden,
+    false,
+  );
 });
 
 test("storage failures and corrupt payloads degrade without throwing", () => {
@@ -319,6 +1737,138 @@ test("storage failures and corrupt payloads degrade without throwing", () => {
   const corrupt = loadStoredState(corruptStorage, ids, () => 0);
   assert.equal(corrupt.state.mode, "all");
   assert.match(corrupt.warning, /已重置/);
+});
+
+test("v2 storage wins and legacy migration runs only when v2 is absent", () => {
+  const ids = [1, 2, 3];
+  const v2 = createInitialState(ids, () => 0);
+  const legacy = {
+    version: 1,
+    mode: "all",
+    deck: [1, 3, 2],
+    index: 1,
+    hardIds: [2],
+  };
+  const both = makeStorage({
+    [STORAGE_KEY]: JSON.stringify(v2),
+    [LEGACY_STORAGE_KEY]: JSON.stringify(legacy),
+  });
+
+  const preferred = loadStoredState(both, ids, () => 0);
+  assert.equal(preferred.migrated, false);
+  assert.equal(getCurrentQuestionId(preferred.state), 2);
+
+  const legacyOnly = makeStorage({
+    [LEGACY_STORAGE_KEY]: JSON.stringify(legacy),
+  });
+  const migrated = loadStoredState(legacyOnly, ids, () => 0);
+  assert.equal(migrated.migrated, true);
+  assert.equal(getCurrentQuestionId(migrated.state), 3);
+  assert.deepEqual(migrated.state.hardIds, [2]);
+  assert.equal(legacyOnly.writes.length, 1);
+  assert.equal(legacyOnly.writes[0][0], STORAGE_KEY);
+  assert.deepEqual(
+    JSON.parse(legacyOnly.writes[0][1]),
+    migrated.state,
+  );
+
+  const invalidV2 = makeStorage({
+    [STORAGE_KEY]: "{broken",
+    [LEGACY_STORAGE_KEY]: JSON.stringify(legacy),
+  });
+  const recovered = loadStoredState(invalidV2, ids, () => 0);
+  assert.equal(recovered.migrated, false);
+  assert.equal(getCurrentQuestionId(recovered.state), 2);
+  assert.deepEqual(recovered.state.hardIds, []);
+});
+
+test("saving uses the v2 key and never persists derived achievements", () => {
+  const storage = makeStorage();
+  const state = {
+    ...createInitialState([1], () => 0),
+    achievements: [{ id: "should-not-persist" }],
+  };
+
+  const saved = saveStoredState(storage, state);
+
+  assert.equal(saved.ok, true);
+  assert.equal(storage.writes.length, 1);
+  assert.equal(storage.writes[0][0], STORAGE_KEY);
+  const persisted = JSON.parse(storage.writes[0][1]);
+  assert.equal(persisted.version, STATE_VERSION);
+  assert.equal(Object.hasOwn(persisted, "achievements"), false);
+});
+
+test("export payloads are timestamped v2 snapshots without derived fields", () => {
+  const state = {
+    ...createInitialState([1, 2, 3], () => 0),
+    achievements: [{ id: "derived" }],
+  };
+
+  const payload = createProgressExport(
+    state,
+    "2026-08-09T09:00:00.000Z",
+  );
+
+  assert.deepEqual(Object.keys(payload), [
+    "schemaVersion",
+    "exportedAt",
+    "data",
+  ]);
+  assert.equal(payload.schemaVersion, 2);
+  assert.equal(payload.exportedAt, "2026-08-09T09:00:00.000Z");
+  assert.notEqual(payload.data, state);
+  assert.equal(Object.hasOwn(payload.data, "achievements"), false);
+});
+
+test("strict import accepts only valid v2 exports at or below 1 MB", () => {
+  const ids = [1, 2, 3];
+  const state = createInitialState(ids, () => 0);
+  const serialized = JSON.stringify(
+    createProgressExport(state, "2026-08-09T09:00:00.000Z"),
+  );
+
+  const imported = parseProgressImport(serialized, ids, () => 0);
+
+  assert.deepEqual(imported, state);
+  assert.notEqual(imported, state);
+  assert.equal(MAX_IMPORT_BYTES, 1_000_000);
+});
+
+test("invalid import is rejected without mutating current progress", async (context) => {
+  const ids = [1, 2, 3];
+  const current = createInitialState(ids, () => 0);
+  const snapshot = clone(current);
+  deepFreeze(current);
+  const invalidPayloads = {
+    "oversized input": "x".repeat(MAX_IMPORT_BYTES + 1),
+    "malformed JSON": "{broken",
+    "wrong envelope version": JSON.stringify({
+      schemaVersion: 1,
+      exportedAt: "2026-08-09T09:00:00.000Z",
+      data: current,
+    }),
+    "invalid export timestamp": JSON.stringify({
+      schemaVersion: 2,
+      exportedAt: "yesterday",
+      data: current,
+    }),
+    "invalid state": JSON.stringify({
+      schemaVersion: 2,
+      exportedAt: "2026-08-09T09:00:00.000Z",
+      data: { ...current, deck: [1, 1, 3] },
+    }),
+  };
+
+  for (const [label, serialized] of Object.entries(invalidPayloads)) {
+    await context.test(label, () => {
+      assert.throws(
+        () => parseProgressImport(serialized, ids, () => 0),
+        TypeError,
+      );
+      assert.deepEqual(current, snapshot);
+    });
+  }
 });
 
 test("question validation accepts safe records and rejects malformed input", async (context) => {
@@ -375,4 +1925,39 @@ test("mobile action layout preserves DOM and visual focus order", () => {
     /\.card-actions\s*\{[^}]*grid-template-columns:\s*1fr\s*;/s,
   );
   assert.doesNotMatch(mobileCss, /\b(?:grid-row|order)\s*:/);
+});
+
+test("document includes an actionable service-worker update control", () => {
+  const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+  const updateNotice = html.match(
+    /<div\b[^>]*id="update-notice"[\s\S]*?<\/div>/,
+  );
+
+  assert.notEqual(updateNotice, null);
+  assert.match(updateNotice[0], /data-update-action/);
+  assert.match(updateNotice[0], /更新/);
+});
+
+test("profile markup keeps units and exposes level progress semantics", () => {
+  const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+
+  assert.match(
+    html,
+    /<strong>\s*<span id="study-streak">0<\/span>\s*天\s*<\/strong>/,
+  );
+  assert.match(
+    html,
+    /class="xp-track"[^>]*role="progressbar"[^>]*aria-label="等级经验"/,
+  );
+  assert.doesNotMatch(
+    html,
+    /class="xp-track"[^>]*aria-hidden="true"/,
+  );
+});
+
+test("achievement items render into a semantic list", () => {
+  const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+
+  assert.match(html, /<ul\b[^>]*id="achievements-list"/);
+  assert.doesNotMatch(html, /<div\b[^>]*id="achievements-list"/);
 });
