@@ -369,6 +369,7 @@
       "next-button",
       "hard-button",
       "reshuffle-button",
+      "review-actions",
       "live-region",
     ];
     const elements = {};
@@ -494,7 +495,10 @@
       elements["hard-count"].textContent = `不会题 ${state.hardIds.length}`;
       elements["question-card"].hidden = isEmpty;
       elements["empty-state"].hidden = !isEmpty;
+      elements["review-actions"].hidden = isEmpty;
       disableQuestionControls(isEmpty);
+      elements["hard-button"].setAttribute("aria-pressed", "false");
+      elements["hard-button"].textContent = "标记不会";
 
       const progressMaximum = Math.max(activeDeck.length, 1);
       const progressValue = isEmpty ? 0 : state.index + 1;
@@ -674,7 +678,10 @@
   });
 
   if (typeof module !== "undefined" && module.exports) {
-    module.exports = api;
+    module.exports = Object.freeze({
+      ...api,
+      startBrowserApp,
+    });
   }
   if (typeof window !== "undefined") {
     window.GoInterviewCore = api;

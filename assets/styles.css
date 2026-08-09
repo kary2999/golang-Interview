@@ -505,12 +505,7 @@ a:focus-visible {
   }
 
   .card-actions {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .action-primary {
-    grid-column: 1 / -1;
-    grid-row: 1;
+    grid-template-columns: 1fr;
   }
 }
 

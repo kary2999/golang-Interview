@@ -173,6 +173,20 @@ class VerifyProjectTest(unittest.TestCase):
             "dynamic import": 'import("./feature.js");',
             "remote CSS": '@import url("https://example.com/theme.css");',
             "protocol-relative URL": 'const asset = "//example.com/a.png";',
+            "relative XMLHttpRequest": (
+                "const request = new XMLHttpRequest();\n"
+                'request.open("GET", "./questions.json");\n'
+                "request.send();"
+            ),
+            "window XMLHttpRequest": (
+                "const request = new window.XMLHttpRequest();"
+            ),
+            "relative WebSocket": 'new WebSocket("/updates");',
+            "relative EventSource": 'new EventSource("/events");',
+            "relative WebTransport": 'new WebTransport("/transport");',
+            "sendBeacon": (
+                'navigator.sendBeacon("/telemetry", "payload");'
+            ),
         }
 
         for label, snippet in forbidden_snippets.items():
@@ -186,6 +200,19 @@ class VerifyProjectTest(unittest.TestCase):
                     )
                     with self.assertRaises(VerificationError):
                         verify_static_code(root)
+
+        allowed_documentation = (
+            'const xhrNote = "XMLHttpRequest requires an explicit request";\n'
+            'const beaconNote = "navigator.sendBeacon is not used";\n'
+        )
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            write_valid_page(root)
+            (root / "assets" / "app.js").write_text(
+                allowed_documentation,
+                encoding="utf-8",
+            )
+            verify_static_code(root)
 
     def test_required_maintenance_files_and_cursor_rule_are_enforced(self):
         required_files = [

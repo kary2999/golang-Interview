@@ -2,6 +2,8 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const test = require("node:test");
 
 const {
@@ -14,8 +16,11 @@ const {
   normalizeState,
   saveStoredState,
   shuffle,
+  startBrowserApp,
   toggleHardId,
 } = require("../assets/app.js");
+
+const ROOT = path.resolve(__dirname, "..");
 
 function makeQuestions() {
   return [
@@ -38,6 +43,92 @@ function makeQuestions() {
       source: "supplemented",
     },
   ];
+}
+
+class FakeElement {
+  constructor(id) {
+    this.id = id;
+    this.attributes = new Map();
+    this.disabled = false;
+    this.hidden = false;
+    this.innerHTML = "";
+    this.isContentEditable = false;
+    this.listeners = new Map();
+    this.parentElement = null;
+    this.style = {};
+    this.tagName = id.endsWith("button") ? "BUTTON" : "DIV";
+    this.textContent = "";
+  }
+
+  addEventListener(type, listener) {
+    const listeners = this.listeners.get(type) || [];
+    listeners.push(listener);
+    this.listeners.set(type, listeners);
+  }
+
+  click() {
+    if (this.disabled) {
+      return;
+    }
+    for (const listener of this.listeners.get("click") || []) {
+      listener({ target: this });
+    }
+  }
+
+  getAttribute(name) {
+    return this.attributes.get(name) ?? null;
+  }
+
+  setAttribute(name, value) {
+    this.attributes.set(name, String(value));
+  }
+}
+
+function makeFakeDocument() {
+  const ids = [
+    "app",
+    "app-error",
+    "storage-warning",
+    "mode-all",
+    "mode-hard",
+    "hard-count",
+    "progress-text",
+    "progress-bar",
+    "progress-fill",
+    "question-card",
+    "question-number",
+    "source-badge",
+    "question-text",
+    "answer-panel",
+    "answer-content",
+    "empty-state",
+    "previous-button",
+    "answer-button",
+    "next-button",
+    "hard-button",
+    "reshuffle-button",
+    "review-actions",
+    "live-region",
+  ];
+  const elements = new Map(
+    ids.map((id) => [id, new FakeElement(id)]),
+  );
+  return {
+    addEventListener() {},
+    body: new FakeElement("body"),
+    elements,
+    getElementById(id) {
+      return elements.get(id) || null;
+    },
+    querySelectorAll(selector) {
+      if (selector !== "button") {
+        return [];
+      }
+      return [...elements.values()].filter(
+        (element) => element.tagName === "BUTTON",
+      );
+    },
+  };
 }
 
 test("shuffle returns every item once without mutating the input", () => {
@@ -161,6 +252,43 @@ test("hard-ID toggling adds once, removes cleanly, and clamps hard mode", () => 
   assert.equal(new Set(added.hardIds).size, added.hardIds.length);
 });
 
+test("removing the last hard question resets and hides review controls", () => {
+  const documentObject = makeFakeDocument();
+  const storedState = {
+    version: STATE_VERSION,
+    mode: "hard",
+    deck: [1],
+    index: 0,
+    hardIds: [1],
+  };
+  const browserGlobal = {
+    GO_INTERVIEW_QUESTIONS: [makeQuestions()[0]],
+    localStorage: {
+      getItem() {
+        return JSON.stringify(storedState);
+      },
+      setItem() {},
+    },
+    setTimeout(callback) {
+      callback();
+    },
+  };
+
+  startBrowserApp(documentObject, browserGlobal);
+  const hardButton = documentObject.elements.get("hard-button");
+  assert.equal(hardButton.textContent, "取消不会");
+  assert.equal(hardButton.getAttribute("aria-pressed"), "true");
+
+  hardButton.click();
+
+  assert.equal(documentObject.elements.get("empty-state").hidden, false);
+  assert.equal(documentObject.elements.get("question-card").hidden, true);
+  assert.equal(documentObject.elements.get("review-actions").hidden, true);
+  assert.equal(hardButton.disabled, true);
+  assert.equal(hardButton.textContent, "标记不会");
+  assert.equal(hardButton.getAttribute("aria-pressed"), "false");
+});
+
 test("storage failures and corrupt payloads degrade without throwing", () => {
   const ids = [1, 2, 3];
   const throwingStorage = {
@@ -219,4 +347,32 @@ test("question validation accepts safe records and rejects malformed input", asy
       assert.throws(() => normalizeQuestions(input), TypeError);
     });
   }
+});
+
+test("mobile action layout preserves DOM and visual focus order", () => {
+  const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+  const previousIndex = html.indexOf('id="previous-button"');
+  const answerIndex = html.indexOf('id="answer-button"');
+  const nextIndex = html.indexOf('id="next-button"');
+
+  assert.ok(previousIndex >= 0);
+  assert.ok(previousIndex < answerIndex);
+  assert.ok(answerIndex < nextIndex);
+
+  const css = fs.readFileSync(
+    path.join(ROOT, "assets", "styles.css"),
+    "utf8",
+  );
+  const mobileStart = css.indexOf("@media (max-width: 430px)");
+  const mobileEnd = css.indexOf(
+    "@media (prefers-reduced-motion: reduce)",
+    mobileStart,
+  );
+  const mobileCss = css.slice(mobileStart, mobileEnd);
+
+  assert.match(
+    mobileCss,
+    /\.card-actions\s*\{[^}]*grid-template-columns:\s*1fr\s*;/s,
+  );
+  assert.doesNotMatch(mobileCss, /\b(?:grid-row|order)\s*:/);
 });

@@ -46,6 +46,26 @@ _REMOTE_URL_RE = re.compile(
 _NETWORK_OR_MODULE_PATTERNS = {
     "fetch 调用": re.compile(r"\bfetch\s*\("),
     "动态 import": re.compile(r"\bimport\s*\("),
+    "XMLHttpRequest 调用": re.compile(
+        r"\b(?:new\s+)?(?:(?:window|globalThis)\s*\.\s*)?"
+        r"XMLHttpRequest\s*\("
+    ),
+    "WebSocket 调用": re.compile(
+        r"\b(?:new\s+)?(?:(?:window|globalThis)\s*\.\s*)?"
+        r"WebSocket\s*\("
+    ),
+    "EventSource 调用": re.compile(
+        r"\b(?:new\s+)?(?:(?:window|globalThis)\s*\.\s*)?"
+        r"EventSource\s*\("
+    ),
+    "WebTransport 调用": re.compile(
+        r"\b(?:new\s+)?(?:(?:window|globalThis)\s*\.\s*)?"
+        r"WebTransport\s*\("
+    ),
+    "sendBeacon 调用": re.compile(
+        r"\b(?:(?:window|globalThis)\s*\.\s*)?"
+        r"navigator\s*\.\s*sendBeacon\s*\("
+    ),
     "远程 URL": _REMOTE_URL_RE,
     "CSS @import": re.compile(r"(?i)@import\b"),
 }
