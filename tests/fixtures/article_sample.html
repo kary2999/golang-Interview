@@ -1,0 +1,25 @@
+<!doctype html>
+<!-- [skill: go-team-standards · dev-dna] 提供安全提取边界测试样本 -->
+<html lang="zh-CN">
+<body>
+  <div class="RichText ztext">
+    <h3>99 不应提取的问题</h3>
+    <p>OUTSIDE_CONTENT_MUST_NOT_SURVIVE</p>
+  </div>
+  <div class="RichText ztext Post-RichText">
+    <h3>01 Go 的 slice 是什么？</h3>
+    <p>slice 是一个描述符，包含<a href="https://example.com">指针</a>、<span>长度</span>和容量。</p>
+    <p>转义示例：&lt;unsafe&gt; &amp; "quoted"</p>
+    <script>SCRIPT_BODY_MUST_NOT_SURVIVE</script>
+    <h3>答疑</h3>
+    <p><strong>补充：</strong>底层数组可能被多个 slice 共享。</p>
+    <h3>02 defer 的顺序是什么？</h3>
+    <pre><code class="language-text">defer first()
+defer second()</code></pre>
+    <p><code class="Language-Go extra" data-x="bad">invalid class text</code></p>
+    <svg><text>SVG_BODY_MUST_NOT_SURVIVE</text></svg>
+    <h2>欢迎关注</h2>
+    <p>推广内容不应进入答案。</p>
+  </div>
+</body>
+</html>
