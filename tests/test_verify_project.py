@@ -187,6 +187,10 @@ class VerifyProjectTest(unittest.TestCase):
             "sendBeacon": (
                 'navigator.sendBeacon("/telemetry", "payload");'
             ),
+            "template interpolation call": (
+                "const warning = "
+                "`request: ${new XMLHttpRequest()}`;"
+            ),
         }
 
         for label, snippet in forbidden_snippets.items():
@@ -201,18 +205,42 @@ class VerifyProjectTest(unittest.TestCase):
                     with self.assertRaises(VerificationError):
                         verify_static_code(root)
 
-        allowed_documentation = (
-            'const xhrNote = "XMLHttpRequest requires an explicit request";\n'
-            'const beaconNote = "navigator.sendBeacon is not used";\n'
-        )
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            root = Path(temporary_directory)
-            write_valid_page(root)
-            (root / "assets" / "app.js").write_text(
-                allowed_documentation,
-                encoding="utf-8",
-            )
-            verify_static_code(root)
+        allowed_documentation = {
+            "double-quoted text": (
+                'const note = "Do not use XMLHttpRequest() '
+                'in this offline app.";\n'
+            ),
+            "single-quoted text": (
+                "const note = 'Do not use WebSocket() "
+                "in this offline app.';\n"
+            ),
+            "escaped quote and comment markers in text": (
+                'const note = "Avoid \\"EventSource()\\" and '
+                '// this is still text";\n'
+            ),
+            "line comment": (
+                "// navigator.sendBeacon() is forbidden\n"
+                "const isOffline = true;\n"
+            ),
+            "block comment": (
+                "/* new WebTransport() is forbidden here. */\n"
+                "const isOffline = true;\n"
+            ),
+            "template literal text": (
+                "const note = `Do not use XMLHttpRequest() "
+                "or navigator.sendBeacon()`;\n"
+            ),
+        }
+        for label, source in allowed_documentation.items():
+            with self.subTest(label=label):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    root = Path(temporary_directory)
+                    write_valid_page(root)
+                    (root / "assets" / "app.js").write_text(
+                        source,
+                        encoding="utf-8",
+                    )
+                    verify_static_code(root)
 
     def test_required_maintenance_files_and_cursor_rule_are_enforced(self):
         required_files = [

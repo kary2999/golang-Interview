@@ -43,7 +43,7 @@ _DATA_ASSIGNMENT_RE = re.compile(
 _REMOTE_URL_RE = re.compile(
     r"(?i)(?:https?:)?//[a-z0-9]"
 )
-_NETWORK_OR_MODULE_PATTERNS = {
+_EXECUTABLE_JAVASCRIPT_PATTERNS = {
     "fetch 调用": re.compile(r"\bfetch\s*\("),
     "动态 import": re.compile(r"\bimport\s*\("),
     "XMLHttpRequest 调用": re.compile(
@@ -66,6 +66,8 @@ _NETWORK_OR_MODULE_PATTERNS = {
         r"\b(?:(?:window|globalThis)\s*\.\s*)?"
         r"navigator\s*\.\s*sendBeacon\s*\("
     ),
+}
+_RAW_STATIC_PATTERNS = {
     "远程 URL": _REMOTE_URL_RE,
     "CSS @import": re.compile(r"(?i)@import\b"),
 }
@@ -73,6 +75,114 @@ _NETWORK_OR_MODULE_PATTERNS = {
 
 class VerificationError(RuntimeError):
     """Raised when the repository violates a project contract."""
+
+
+def _mask_javascript_non_code(source):
+    """Mask comments and literal text while retaining template expressions."""
+    masked = list(source)
+    source_length = len(source)
+
+    def mask_character(index):
+        if source[index] not in "\r\n":
+            masked[index] = " "
+
+    def consume_quoted(index, quote):
+        mask_character(index)
+        index += 1
+        while index < source_length:
+            character = source[index]
+            mask_character(index)
+            if character == "\\":
+                index += 1
+                if index < source_length:
+                    mask_character(index)
+                    index += 1
+            elif character == quote:
+                return index + 1
+            else:
+                index += 1
+        return index
+
+    def consume_line_comment(index):
+        while (
+            index < source_length
+            and source[index] not in "\r\n"
+        ):
+            mask_character(index)
+            index += 1
+        return index
+
+    def consume_block_comment(index):
+        while index < source_length:
+            if source.startswith("*/", index):
+                mask_character(index)
+                mask_character(index + 1)
+                return index + 2
+            mask_character(index)
+            index += 1
+        return index
+
+    def consume_template(index):
+        mask_character(index)
+        index += 1
+        while index < source_length:
+            character = source[index]
+            if character == "\\":
+                mask_character(index)
+                index += 1
+                if index < source_length:
+                    mask_character(index)
+                    index += 1
+            elif character == "`":
+                mask_character(index)
+                return index + 1
+            elif source.startswith("${", index):
+                mask_character(index)
+                mask_character(index + 1)
+                index = consume_template_expression(index + 2)
+            else:
+                mask_character(index)
+                index += 1
+        return index
+
+    def consume_template_expression(index):
+        brace_depth = 1
+        while index < source_length:
+            if source.startswith("//", index):
+                index = consume_line_comment(index)
+            elif source.startswith("/*", index):
+                index = consume_block_comment(index)
+            elif source[index] in {"'", '"'}:
+                index = consume_quoted(index, source[index])
+            elif source[index] == "`":
+                index = consume_template(index)
+            elif source[index] == "{":
+                brace_depth += 1
+                index += 1
+            elif source[index] == "}":
+                brace_depth -= 1
+                if brace_depth == 0:
+                    mask_character(index)
+                    return index + 1
+                index += 1
+            else:
+                index += 1
+        return index
+
+    index = 0
+    while index < source_length:
+        if source.startswith("//", index):
+            index = consume_line_comment(index)
+        elif source.startswith("/*", index):
+            index = consume_block_comment(index)
+        elif source[index] in {"'", '"'}:
+            index = consume_quoted(index, source[index])
+        elif source[index] == "`":
+            index = consume_template(index)
+        else:
+            index += 1
+
+    return "".join(masked)
 
 
 class _IndexParser(HTMLParser):
@@ -291,11 +401,31 @@ def verify_static_code(root):
                 "缺少静态文件 {}".format(path.relative_to(root))
             )
         content = path.read_text(encoding="utf-8")
-        for label, pattern in _NETWORK_OR_MODULE_PATTERNS.items():
-            if pattern.search(content):
+        for label, pattern in _RAW_STATIC_PATTERNS.items():
+            match = pattern.search(content)
+            if match is not None:
                 raise VerificationError(
-                    "{} 包含不允许的{}".format(
+                    "{}:{} 包含不允许的{}".format(
                         path.relative_to(root),
+                        content.count("\n", 0, match.start()) + 1,
+                        label,
+                    )
+                )
+        if path.suffix != ".js":
+            continue
+
+        executable_content = _mask_javascript_non_code(content)
+        for label, pattern in _EXECUTABLE_JAVASCRIPT_PATTERNS.items():
+            match = pattern.search(executable_content)
+            if match is not None:
+                raise VerificationError(
+                    "{}:{} 包含不允许的{}".format(
+                        path.relative_to(root),
+                        executable_content.count(
+                            "\n",
+                            0,
+                            match.start(),
+                        ) + 1,
                         label,
                     )
                 )
