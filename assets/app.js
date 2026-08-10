@@ -18,8 +18,8 @@
   });
   const RATING_SECONDARY_FEEDBACK = Object.freeze({
     mastered: "+20 XP · 已移出待复习",
-    fuzzy: "+8 XP · 20 次后复习",
-    hard: "+2 XP · 7 次后复习",
+    fuzzy: "+8 XP · 已加入待复习",
+    hard: "+2 XP · 已加入待复习",
   });
   const MASCOT_MOOD_LABELS = Object.freeze({
     normal: "普通",
@@ -27,13 +27,17 @@
     frantic: "抓狂",
   });
   const CHECKIN_SUCCESS_LABEL = "今日打卡成功";
+  const CHECKIN_CELEBRATION_TITLE = "恭喜，今日打卡成功";
+  const CHECKIN_CELEBRATION_MESSAGE = (
+    "今天 20 道已经答完，距离找到工作又近了一步。"
+  );
   const V2_MIGRATION_NOTICE = (
     "打卡规则已升级为每天 20 道不同题；训练与 XP 已保留，连续打卡从新规则重新计算。"
   );
   const RATING_CONFIG = Object.freeze({
-    hard: Object.freeze({ xp: 2, reviewAfter: 7 }),
-    fuzzy: Object.freeze({ xp: 8, reviewAfter: 20 }),
-    mastered: Object.freeze({ xp: 20, reviewAfter: null }),
+    hard: Object.freeze({ xp: 2 }),
+    fuzzy: Object.freeze({ xp: 8 }),
+    mastered: Object.freeze({ xp: 20 }),
   });
   const VALID_MODES = new Set(["all", "hard"]);
   const VALID_RATINGS = new Set(Object.keys(RATING_CONFIG));
@@ -383,21 +387,6 @@
         ? hardDeck.indexOf(currentHardId)
         : Math.min(state.views.hard.index, hardDeck.length - 1);
     }
-    const reviewQueue = state.reviewQueue
-      .filter((entry) => entry.questionId !== questionId);
-    if (!wasHard) {
-      reviewQueue.push({
-        questionId,
-        dueAfterRatingCount: (
-          state.ratingCount + RATING_CONFIG.hard.reviewAfter
-        ),
-      });
-      reviewQueue.sort(
-        (left, right) => (
-          left.dueAfterRatingCount - right.dueAfterRatingCount
-        ),
-      );
-    }
     return {
       ...state,
       views: {
@@ -408,7 +397,7 @@
         },
       },
       hardIds,
-      reviewQueue,
+      reviewQueue: [],
     };
   }
 
@@ -774,26 +763,6 @@
     };
   }
 
-  function takeDueReview(state) {
-    const dueReviews = state.reviewQueue
-      .filter((entry) => entry.dueAfterRatingCount <= state.ratingCount)
-      .sort(
-        (left, right) => (
-          left.dueAfterRatingCount - right.dueAfterRatingCount
-        ),
-      );
-    if (dueReviews.length === 0) {
-      return null;
-    }
-    const selected = dueReviews[0];
-    return {
-      questionId: selected.questionId,
-      reviewQueue: state.reviewQueue.filter(
-        (entry) => entry.questionId !== selected.questionId,
-      ),
-    };
-  }
-
   function selectNextAllQuestion(state, random, allowRoundRollover) {
     const allView = state.views.all;
     if (allView.historyIndex < allView.history.length - 1) {
@@ -807,18 +776,6 @@
             currentQuestionId: allView.history[historyIndex],
             historyIndex,
           },
-        },
-      };
-    }
-
-    const dueReview = takeDueReview(state);
-    if (dueReview !== null) {
-      return {
-        ...state,
-        reviewQueue: dueReview.reviewQueue,
-        views: {
-          ...state.views,
-          all: appendHistory(allView, dueReview.questionId),
         },
       };
     }
@@ -889,9 +846,7 @@
     let nextState = {
       ...state,
       ratingCount,
-      reviewQueue: state.reviewQueue.filter(
-        (entry) => entry.questionId !== questionId,
-      ),
+      reviewQueue: [],
       round: {
         ...state.round,
         seenIds: state.round.seenIds.slice(),
@@ -920,34 +875,12 @@
       ),
     };
 
-    if (config.reviewAfter !== null) {
-      nextState = {
-        ...nextState,
-        reviewQueue: [
-          ...nextState.reviewQueue,
-          {
-            questionId,
-            dueAfterRatingCount: ratingCount + config.reviewAfter,
-          },
-        ].sort(
-          (left, right) => (
-            left.dueAfterRatingCount - right.dueAfterRatingCount
-          ),
-        ),
-      };
-    }
-
     const wasHard = state.hardIds.includes(questionId);
     if (
       (rating === "hard" || rating === "fuzzy")
       && !wasHard
     ) {
-      const ratingReviewQueue = nextState.reviewQueue;
       nextState = toggleHardId(nextState, questionId);
-      nextState = {
-        ...nextState,
-        reviewQueue: ratingReviewQueue,
-      };
     } else if (rating === "mastered" && wasHard) {
       nextState = toggleHardId(nextState, questionId);
     }
@@ -1105,7 +1038,7 @@
         },
       },
       hardIds: candidate.hardIds.slice(),
-      reviewQueue: candidate.reviewQueue.map((entry) => ({ ...entry })),
+      reviewQueue: [],
       ratingCount: candidate.ratingCount,
       round: {
         number: candidate.round.number,
@@ -1599,7 +1532,7 @@
           },
         },
         hardIds: candidate.hardIds.slice(),
-        reviewQueue: candidate.reviewQueue.map((entry) => ({ ...entry })),
+        reviewQueue: [],
         ratingCount: candidate.ratingCount,
         round: {
           number: candidate.round.number,
@@ -1642,7 +1575,7 @@
         },
       },
       hardIds: state.hardIds.slice(),
-      reviewQueue: state.reviewQueue.map((entry) => ({ ...entry })),
+      reviewQueue: [],
       ratingCount: state.ratingCount,
       round: {
         number: state.round.number,
@@ -1960,6 +1893,11 @@
       "calendar-grid",
       "notebook-list",
       "notebook-empty",
+      "checkin-dialog",
+      "checkin-dialog-title",
+      "checkin-dialog-message",
+      "checkin-dialog-stats",
+      "checkin-dialog-close",
       "rating-feedback-primary",
       "rating-feedback-secondary",
       "progress-text",
@@ -2672,6 +2610,9 @@
         if (typeof elements["question-text"].focus === "function") {
           elements["question-text"].focus();
         }
+        if (result.outcome.checkInCompleted) {
+          celebrateDailyCheckIn(checkIn);
+        }
       };
       if (reducedMotion || typeof browserGlobal.setTimeout !== "function") {
         advance();
@@ -2699,6 +2640,26 @@
           elements["study-records-title"].focus();
         }
       }
+      if (dialog === elements["checkin-dialog"]) {
+        if (typeof elements["checkin-dialog-close"].focus === "function") {
+          elements["checkin-dialog-close"].focus();
+        }
+      }
+    }
+
+    function celebrateDailyCheckIn(checkIn) {
+      elements["checkin-dialog-title"].textContent = (
+        CHECKIN_CELEBRATION_TITLE
+      );
+      elements["checkin-dialog-message"].textContent = (
+        CHECKIN_CELEBRATION_MESSAGE
+      );
+      elements["checkin-dialog-stats"].textContent = (
+        `今日 ${checkIn.displayCount} / ${checkIn.goal} 道 · `
+        + `连续学习 ${state.profile.studyStreakDays} 天 · `
+        + `Lv. ${deriveLevel(state.profile.totalXp).level}`
+      );
+      openDialog(elements["checkin-dialog"]);
     }
 
     function closeDialog(dialog, trigger = null) {
@@ -2724,6 +2685,7 @@
     function isBlockingDialogOpen() {
       return (
         studyRecordsOpen
+        || elements["checkin-dialog"].open === true
         || elements["achievements-dialog"].open === true
         || elements["progress-dialog"].open === true
         || elements["install-help"].open === true
@@ -3119,6 +3081,15 @@
         elements["study-records-button"],
       ),
     );
+    elements["checkin-dialog-close"].addEventListener(
+      "click",
+      () => closeDialog(elements["checkin-dialog"]),
+    );
+    elements["checkin-dialog"].addEventListener("close", () => {
+      if (typeof elements["question-text"].focus === "function") {
+        elements["question-text"].focus();
+      }
+    });
     elements["tab-calendar"].addEventListener(
       "click",
       () => setStudyRecordsTab("tab-calendar"),
@@ -3264,6 +3235,8 @@
   }
 
   const api = Object.freeze({
+    CHECKIN_CELEBRATION_MESSAGE,
+    CHECKIN_CELEBRATION_TITLE,
     CHECKIN_SUCCESS_LABEL,
     DAILY_CHECKIN_UNIQUE_QUESTIONS,
     LEGACY_STORAGE_KEY,

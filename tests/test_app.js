@@ -8,6 +8,8 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  CHECKIN_CELEBRATION_MESSAGE,
+  CHECKIN_CELEBRATION_TITLE,
   CHECKIN_SUCCESS_LABEL,
   DAILY_CHECKIN_UNIQUE_QUESTIONS,
   LEGACY_STORAGE_KEY,
@@ -271,6 +273,11 @@ function makeFakeDocument() {
     "calendar-grid",
     "notebook-list",
     "notebook-empty",
+    "checkin-dialog",
+    "checkin-dialog-title",
+    "checkin-dialog-message",
+    "checkin-dialog-stats",
+    "checkin-dialog-close",
     "rating-feedback-primary",
     "rating-feedback-secondary",
     "progress-text",
@@ -464,9 +471,9 @@ test("v2 initial state starts an infinite all-question round", () => {
   assert.equal(Object.isFrozen(RATING_CONFIG), true);
   assert.equal(Object.isFrozen(RATING_CONFIG.hard), true);
   assert.deepEqual(RATING_CONFIG, {
-    hard: { xp: 2, reviewAfter: 7 },
-    fuzzy: { xp: 8, reviewAfter: 20 },
-    mastered: { xp: 20, reviewAfter: null },
+    hard: { xp: 2 },
+    fuzzy: { xp: 8 },
+    mastered: { xp: 20 },
   });
   assert.deepEqual(state.deck, [2, 3, 1]);
   assert.equal(state.deckIndex, 1);
@@ -506,7 +513,7 @@ test("v2 initial state starts an infinite all-question round", () => {
   assert.equal(getCurrentQuestionId(state), 2);
 });
 
-test("ratings award repeat XP and replace deterministic review schedules", () => {
+test("ratings award repeat XP without scheduling a random-stream comeback", () => {
   const initial = createInitialState([1], () => 0);
   const questionId = getCurrentQuestionId(initial);
   const hard = applyRating(
@@ -525,10 +532,7 @@ test("ratings award repeat XP and replace deterministic review schedules", () =>
   });
   assert.equal(hard.state.profile.totalXp, 2);
   assert.deepEqual(hard.state.hardIds, [questionId]);
-  assert.deepEqual(hard.state.reviewQueue, [{
-    questionId,
-    dueAfterRatingCount: 8,
-  }]);
+  assert.deepEqual(hard.state.reviewQueue, []);
 
   const fuzzy = applyRating(
     hard.state,
@@ -540,10 +544,7 @@ test("ratings award repeat XP and replace deterministic review schedules", () =>
 
   assert.equal(fuzzy.outcome.xpEarned, 8);
   assert.equal(fuzzy.state.profile.totalXp, 10);
-  assert.deepEqual(fuzzy.state.reviewQueue, [{
-    questionId,
-    dueAfterRatingCount: 22,
-  }]);
+  assert.deepEqual(fuzzy.state.reviewQueue, []);
   assert.deepEqual(fuzzy.state.questionStats[String(questionId)], {
     attempts: 2,
     hardCount: 1,
@@ -578,7 +579,7 @@ test("mastered rating removes hard state and increments mastery combo", () => {
   assert.deepEqual(mastered.state.views.hard, { deck: [], index: 0 });
 });
 
-test("a first fuzzy rating joins review mode on the 20-rating schedule", () => {
+test("a first fuzzy rating joins review mode without a reappearance schedule", () => {
   const initial = createInitialState([1, 2, 3], () => 0);
   const questionId = getCurrentQuestionId(initial);
 
@@ -592,10 +593,54 @@ test("a first fuzzy rating joins review mode on the 20-rating schedule", () => {
 
   assert.deepEqual(fuzzy.hardIds, [questionId]);
   assert.deepEqual(fuzzy.views.hard.deck, [questionId]);
-  assert.deepEqual(fuzzy.reviewQueue, [{
-    questionId,
-    dueAfterRatingCount: 21,
-  }]);
+  assert.deepEqual(fuzzy.reviewQueue, []);
+});
+
+test("a hard rating never cuts back into the random stream", () => {
+  const ids = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  let state = createInitialState(ids, () => 0);
+  const served = [];
+
+  for (let index = 0; index < ids.length; index += 1) {
+    served.push(getCurrentQuestionId(state));
+    state = applyRating(
+      state,
+      "hard",
+      ids,
+      "2026-08-10T01:00:00.000Z",
+      () => 0,
+    ).state;
+  }
+
+  assert.deepEqual(served.slice().sort((left, right) => left - right), ids);
+  assert.deepEqual(state.reviewQueue, []);
+  assert.deepEqual(
+    state.hardIds.slice().sort((left, right) => left - right),
+    ids,
+  );
+});
+
+test("loading a stored state drops legacy reappearance schedules", () => {
+  const ids = [1, 2, 3];
+  const initial = createInitialState(ids, () => 0);
+  const stored = {
+    ...initial,
+    hardIds: [2],
+    views: {
+      ...initial.views,
+      hard: { deck: [2], index: 0 },
+    },
+    reviewQueue: [{ questionId: 2, dueAfterRatingCount: 8 }],
+  };
+  const storage = makeStorage({
+    [STORAGE_KEY]: JSON.stringify(stored),
+  });
+
+  const loaded = loadStoredState(storage, ids, () => 0);
+
+  assert.deepEqual(loaded.state.reviewQueue, []);
+  assert.deepEqual(loaded.state.hardIds, [2]);
+  assert.equal(loaded.migrated, false);
 });
 
 test("every repeated rating earns XP", () => {
@@ -651,10 +696,10 @@ test("round stats accumulate while non-mastered ratings reset the combo", () => 
   });
 });
 
-test("reviews become due after the configured subsequent ratings", () => {
+test("a hard question stays out of the stream after later ratings", () => {
   const ids = Array.from({ length: 10 }, (_, index) => index + 1);
   let state = createInitialState(ids, () => 0);
-  const reviewQuestionId = getCurrentQuestionId(state);
+  const hardQuestionId = getCurrentQuestionId(state);
 
   state = applyRating(
     state,
@@ -663,7 +708,7 @@ test("reviews become due after the configured subsequent ratings", () => {
     "2026-08-09T09:00:00.000Z",
     () => 0,
   ).state;
-  for (let index = 0; index < 6; index += 1) {
+  for (let index = 0; index < 7; index += 1) {
     state = applyRating(
       state,
       "mastered",
@@ -672,22 +717,14 @@ test("reviews become due after the configured subsequent ratings", () => {
       () => 0,
     ).state;
   }
-  assert.notEqual(getCurrentQuestionId(state), reviewQuestionId);
-
-  state = applyRating(
-    state,
-    "mastered",
-    ids,
-    "2026-08-09T09:07:00.000Z",
-    () => 0,
-  ).state;
 
   assert.equal(state.ratingCount, 8);
-  assert.equal(getCurrentQuestionId(state), reviewQuestionId);
+  assert.notEqual(getCurrentQuestionId(state), hardQuestionId);
   assert.equal(
-    state.views.all.history[state.views.all.history.length - 1],
-    reviewQuestionId,
+    state.views.all.history.filter((id) => id === hardQuestionId).length,
+    1,
   );
+  assert.deepEqual(state.hardIds, [hardQuestionId]);
 });
 
 test("deriveLevel uses fixed 1000 XP levels", () => {
@@ -998,10 +1035,8 @@ test("rolling past a unique deck starts a new round and preserves reviews", () =
     fuzzy: 0,
     mastered: 0,
   });
-  assert.deepEqual(completed.state.reviewQueue, [{
-    questionId: hardId,
-    dueAfterRatingCount: 8,
-  }]);
+  assert.deepEqual(completed.state.reviewQueue, []);
+  assert.deepEqual(completed.state.hardIds, [hardId]);
   assert.equal(completed.state.deck.length, ids.length);
   assert.equal(new Set(completed.state.deck).size, ids.length);
   assert.equal(completed.state.deckIndex, 1);
@@ -1259,10 +1294,7 @@ test("hard-ID toggling adds once, removes cleanly, and clamps hard mode", () => 
   const added = toggleHardId(removed, 3);
   assert.deepEqual(added.hardIds, [1, 3]);
   assert.deepEqual(added.views.hard.deck, [1, 3]);
-  assert.deepEqual(added.reviewQueue, [{
-    questionId: 3,
-    dueAfterRatingCount: 7,
-  }]);
+  assert.deepEqual(added.reviewQueue, []);
   assert.equal(new Set(added.hardIds).size, added.hardIds.length);
 });
 
@@ -2192,7 +2224,8 @@ test("rating announcement keeps encouragement primary", () => {
     "已掌握，干得漂亮。获得 20 XP。今日打卡成功，20 / 20。",
   );
   assert.equal(RATING_PRIMARY_FEEDBACK.fuzzy, "加油，已经很棒了");
-  assert.equal(RATING_SECONDARY_FEEDBACK.hard, "+2 XP · 7 次后复习");
+  assert.equal(RATING_SECONDARY_FEEDBACK.hard, "+2 XP · 已加入待复习");
+  assert.equal(RATING_SECONDARY_FEEDBACK.fuzzy, "+8 XP · 已加入待复习");
 });
 
 test("notebook derives hard and fuzzy items and drops mastered", () => {
@@ -2362,4 +2395,169 @@ test("study records dialog opens calendar and notebook practice reuses hard mode
     documentObject.elements.get("mascot-status").textContent,
     MASCOT_MOOD_LABELS[deriveMascotMood({ completed: false }, new Date())],
   );
+});
+
+function makeManyQuestions(count) {
+  return Array.from({ length: count }, (_, index) => ({
+    id: index + 1,
+    question: `问题 ${index + 1}`,
+    promptHtml: "",
+    answerHtml: `<p>答案 ${index + 1}</p>`,
+    source: "zhihu-archive",
+  }));
+}
+
+function makeCheckInState(ratedTodayCount, currentQuestionId, ids) {
+  const initial = createInitialState(ids, () => 0);
+  const ratedQuestionIds = ids
+    .filter((id) => id !== currentQuestionId)
+    .slice(0, ratedTodayCount);
+  const reviewedAt = "2026-08-10T01:00:00.000Z";
+  const questionStats = Object.fromEntries(
+    ratedQuestionIds.map((id) => [
+      String(id),
+      {
+        attempts: 1,
+        hardCount: 0,
+        fuzzyCount: 0,
+        masteredCount: 1,
+        lastRating: "mastered",
+        lastReviewedAt: reviewedAt,
+      },
+    ]),
+  );
+  const today = new Date();
+  return {
+    ...initial,
+    ratingCount: ratedTodayCount,
+    questionStats,
+    profile: {
+      ...initial.profile,
+      totalXp: ratedTodayCount * RATING_CONFIG.mastered.xp,
+      lastPracticeAt: reviewedAt,
+    },
+    activityDays: [
+      {
+        localDay: localDayKey(today),
+        dayStartedAt: new Date(
+          today.getFullYear(),
+          today.getMonth(),
+          today.getDate(),
+        ).toISOString(),
+        ratingCount: ratedTodayCount,
+        ratedQuestionIds,
+      },
+    ],
+    views: {
+      ...initial.views,
+      all: {
+        currentQuestionId,
+        history: [currentQuestionId],
+        historyIndex: 0,
+      },
+    },
+  };
+}
+
+test("reaching the daily goal celebrates once and stays out of the way", () => {
+  const ids = Array.from({ length: 30 }, (_, index) => index + 1);
+  const documentObject = makeFakeDocument();
+  const storage = makeStorage({
+    [STORAGE_KEY]: JSON.stringify(
+      makeCheckInState(DAILY_CHECKIN_UNIQUE_QUESTIONS - 1, 30, ids),
+    ),
+  });
+  const browserGlobal = makeBrowserGlobal({
+    questions: makeManyQuestions(30),
+    reducedMotion: true,
+    storage,
+  });
+  const app = startBrowserApp(documentObject, browserGlobal);
+  const dialog = documentObject.elements.get("checkin-dialog");
+
+  assert.equal(dialog.open, false);
+  documentObject.elements.get("answer-button").click();
+  documentObject.elements.get("rate-mastered").click();
+
+  assert.equal(dialog.open, true);
+  assert.equal(
+    documentObject.elements.get("checkin-dialog-title").textContent,
+    CHECKIN_CELEBRATION_TITLE,
+  );
+  assert.equal(
+    documentObject.elements.get("checkin-dialog-message").textContent,
+    CHECKIN_CELEBRATION_MESSAGE,
+  );
+  assert.match(
+    documentObject.elements.get("checkin-dialog-message").textContent,
+    /找到工作/,
+  );
+  assert.match(
+    documentObject.elements.get("checkin-dialog-stats").textContent,
+    /20 \/ 20/,
+  );
+
+  documentObject.elements.get("checkin-dialog-close").click();
+  assert.equal(dialog.open, false);
+
+  const ratedBefore = app.getState().ratingCount;
+  documentObject.elements.get("answer-button").click();
+  documentObject.elements.get("rate-mastered").click();
+  assert.equal(app.getState().ratingCount, ratedBefore + 1);
+  assert.equal(dialog.open, false);
+});
+
+test("celebration dialog swallows practice shortcuts while open", async () => {
+  const ids = Array.from({ length: 30 }, (_, index) => index + 1);
+  const documentObject = makeFakeDocument();
+  const storage = makeStorage({
+    [STORAGE_KEY]: JSON.stringify(
+      makeCheckInState(DAILY_CHECKIN_UNIQUE_QUESTIONS - 1, 30, ids),
+    ),
+  });
+  const browserGlobal = makeBrowserGlobal({
+    questions: makeManyQuestions(30),
+    reducedMotion: true,
+    storage,
+  });
+  const app = startBrowserApp(documentObject, browserGlobal);
+  documentObject.elements.get("answer-button").click();
+  documentObject.elements.get("rate-mastered").click();
+  assert.equal(documentObject.elements.get("checkin-dialog").open, true);
+
+  const ratedBefore = app.getState().ratingCount;
+  const blocked = await documentObject.dispatch("keydown", { key: "3" });
+
+  assert.equal(blocked.defaultPrevented, false);
+  assert.equal(app.getState().ratingCount, ratedBefore);
+});
+
+test("restarting after the daily goal does not celebrate again", () => {
+  const ids = Array.from({ length: 30 }, (_, index) => index + 1);
+  const documentObject = makeFakeDocument();
+  const storage = makeStorage({
+    [STORAGE_KEY]: JSON.stringify(
+      makeCheckInState(DAILY_CHECKIN_UNIQUE_QUESTIONS, 30, ids),
+    ),
+  });
+  const browserGlobal = makeBrowserGlobal({
+    questions: makeManyQuestions(30),
+    reducedMotion: true,
+    storage,
+  });
+  startBrowserApp(documentObject, browserGlobal);
+
+  assert.equal(documentObject.elements.get("checkin-dialog").open, false);
+  assert.equal(
+    documentObject.elements.get("daily-checkin-caption").textContent,
+    CHECKIN_SUCCESS_LABEL,
+  );
+});
+
+test("celebration dialog is declared in the page shell", () => {
+  const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+
+  assert.match(html, /<dialog\b[^>]*id="checkin-dialog"/);
+  assert.match(html, /id="checkin-dialog-close"/);
+  assert.match(html, /aria-labelledby="checkin-dialog-title"/);
 });
