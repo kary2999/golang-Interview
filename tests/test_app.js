@@ -2358,5 +2358,8 @@ test("study records dialog opens calendar and notebook practice reuses hard mode
   button.click();
   assert.equal(app.getState().mode, "hard");
   assert.equal(getCurrentQuestionId(app.getState()), 2);
-  assert.equal(documentObject.elements.get("mascot-status").textContent, "普通");
+  assert.equal(
+    documentObject.elements.get("mascot-status").textContent,
+    MASCOT_MOOD_LABELS[deriveMascotMood({ completed: false }, new Date())],
+  );
 });
