@@ -677,6 +677,37 @@
         </p>
       </section>
     </dialog>
+
+    <dialog
+      id="checkin-dialog"
+      class="app-dialog checkin-dialog"
+      aria-labelledby="checkin-dialog-title"
+    >
+      <span class="checkin-medal" aria-hidden="true">
+        <svg class="checkin-medal-art" viewBox="0 0 48 48" focusable="false">
+          <circle class="checkin-medal-shadow" cx="26" cy="26" r="17" />
+          <circle class="checkin-medal-face" cx="24" cy="24" r="17" />
+          <path
+            class="checkin-medal-star"
+            d="M24 12.4l3.7 7.4 8.2 1.2-5.9 5.8 1.4 8.1-7.4-3.9-7.4 3.9
+              1.4-8.1-5.9-5.8 8.2-1.2z"
+          />
+        </svg>
+      </span>
+      <p class="eyebrow">每日打卡</p>
+      <h2 id="checkin-dialog-title">恭喜，今日打卡成功</h2>
+      <p id="checkin-dialog-message" class="checkin-message">
+        今天 20 道已经答完，距离找到工作又近了一步。
+      </p>
+      <p id="checkin-dialog-stats" class="checkin-stats"></p>
+      <button
+        id="checkin-dialog-close"
+        class="action-button action-primary"
+        type="button"
+      >
+        继续冲刺
+      </button>
+    </dialog>
   </main>
 
   <div
