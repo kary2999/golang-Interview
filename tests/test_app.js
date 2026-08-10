@@ -8,24 +8,38 @@ const path = require("node:path");
 const test = require("node:test");
 
 const {
+  CHECKIN_SUCCESS_LABEL,
+  DAILY_CHECKIN_UNIQUE_QUESTIONS,
   LEGACY_STORAGE_KEY,
+  MASCOT_MOOD_LABELS,
   MAX_ACTIVITY_DAYS,
   MAX_HISTORY_LENGTH,
   MAX_IMPORT_BYTES,
+  PREVIOUS_STORAGE_KEY,
   RATING_CONFIG,
+  RATING_PRIMARY_FEEDBACK,
+  RATING_SECONDARY_FEEDBACK,
   STATE_VERSION,
   STORAGE_KEY,
+  V2_MIGRATION_NOTICE,
   applyRating,
+  buildRatingAnnouncement,
   canRegisterServiceWorker,
   createExportPayload,
   createInitialState,
   createProgressExport,
   deriveAchievements,
+  deriveCalendarMonth,
+  deriveDailyCheckIn,
   deriveLevel,
+  deriveMascotMood,
+  deriveNotebookItems,
   getActiveDeck,
   getCurrentQuestionId,
   loadStoredState,
+  localDayKey,
   migrateLegacyState,
+  migrateV2State,
   navigateIndex,
   normalizeQuestions,
   normalizeState,
@@ -121,8 +135,24 @@ class FakeElement {
             ? "DIALOG"
             : "DIV"
     );
+    this.tabIndex = 0;
     this.textContent = "";
     this.value = "";
+    this._className = "";
+  }
+
+  get className() {
+    return this._className;
+  }
+
+  set className(value) {
+    this._className = String(value);
+  }
+
+  replaceChildren(...children) {
+    this.children = [];
+    this.append(...children);
+    this.textContent = children.map((child) => child.textContent || "").join("");
   }
 
   addEventListener(type, listener) {
@@ -218,9 +248,31 @@ function makeFakeDocument() {
     "level-text",
     "xp-text",
     "xp-fill",
+    "mascot",
+    "mascot-status",
     "study-streak",
     "daily-count",
+    "daily-goal",
+    "daily-checkin-caption",
+    "daily-progress",
+    "daily-progress-fill",
     "mastery-combo",
+    "study-records-button",
+    "study-records-dialog",
+    "study-records-title",
+    "study-records-close",
+    "tab-calendar",
+    "tab-notebook",
+    "panel-calendar",
+    "panel-notebook",
+    "calendar-prev",
+    "calendar-next",
+    "calendar-month-label",
+    "calendar-grid",
+    "notebook-list",
+    "notebook-empty",
+    "rating-feedback-primary",
+    "rating-feedback-secondary",
     "progress-text",
     "progress-bar",
     "progress-fill",
@@ -367,14 +419,21 @@ function makeBrowserGlobal({
     },
     navigator,
     runTimers() {
-      while (timers.length > 0) {
-        const timer = timers.shift();
+      const pending = timers.splice(0, timers.length);
+      for (const timer of pending) {
         timer.callback();
       }
     },
+    clearTimeout(timerId) {
+      const index = timers.findIndex((timer) => timer.id === timerId);
+      if (index >= 0) {
+        timers.splice(index, 1);
+      }
+    },
     setTimeout(callback, delay = 0) {
-      timers.push({ callback, delay });
-      return timers.length;
+      const id = timers.length + 1;
+      timers.push({ callback, delay, id });
+      return id;
     },
     storage,
     timers,
@@ -395,9 +454,11 @@ test("shuffle returns every item once without mutating the input", () => {
 test("v2 initial state starts an infinite all-question round", () => {
   const state = createInitialState([1, 2, 3], () => 0);
 
-  assert.equal(STATE_VERSION, 2);
-  assert.equal(STORAGE_KEY, "go-interview-progress-v2");
+  assert.equal(STATE_VERSION, 3);
+  assert.equal(STORAGE_KEY, "go-interview-progress-v3");
+  assert.equal(PREVIOUS_STORAGE_KEY, "go-interview-progress-v2");
   assert.equal(LEGACY_STORAGE_KEY, "go-interview-progress-v1");
+  assert.equal(DAILY_CHECKIN_UNIQUE_QUESTIONS, 20);
   assert.equal(MAX_HISTORY_LENGTH, 200);
   assert.equal(MAX_ACTIVITY_DAYS, 400);
   assert.equal(Object.isFrozen(RATING_CONFIG), true);
@@ -460,6 +521,7 @@ test("ratings award repeat XP and replace deterministic review schedules", () =>
     xpEarned: 2,
     leveledUp: false,
     roundCompleted: true,
+    checkInCompleted: false,
   });
   assert.equal(hard.state.profile.totalXp, 2);
   assert.deepEqual(hard.state.hardIds, [questionId]);
@@ -642,43 +704,100 @@ test("deriveLevel uses fixed 1000 XP levels", () => {
   assert.throws(() => deriveLevel(-1), TypeError);
 });
 
-test("the tenth local-day rating qualifies once and clock rollback is monotonic", () => {
-  let state = createInitialState([1], () => 0);
-  for (let index = 0; index < 10; index += 1) {
+test("twenty distinct local-day ratings qualify once and duplicates do not", () => {
+  const ids = Array.from({ length: 25 }, (_, index) => index + 1);
+  let state = createInitialState(ids, () => 0);
+  for (let index = 0; index < 19; index += 1) {
+    state = {
+      ...state,
+      views: {
+        ...state.views,
+        all: {
+          ...state.views.all,
+          currentQuestionId: ids[index],
+          history: [ids[index]],
+          historyIndex: 0,
+        },
+      },
+    };
     state = applyRating(
       state,
       "mastered",
-      [1],
+      ids,
       `2026-08-10T12:${String(index).padStart(2, "0")}:00.000Z`,
       () => 0,
     ).state;
   }
+  assert.equal(state.profile.studyStreakDays, 0);
+  assert.equal(deriveDailyCheckIn(state, new Date(2026, 7, 10, 12)).uniqueCount, 19);
 
+  state = {
+    ...state,
+    views: {
+      ...state.views,
+      all: {
+        ...state.views.all,
+        currentQuestionId: ids[19],
+        history: [ids[19]],
+        historyIndex: 0,
+      },
+    },
+  };
+  const twentieth = applyRating(
+    state,
+    "mastered",
+    ids,
+    "2026-08-10T12:19:00.000Z",
+    () => 0,
+  );
+  state = twentieth.state;
+  assert.equal(twentieth.outcome.checkInCompleted, true);
   assert.equal(state.profile.studyStreakDays, 1);
   assert.equal(state.profile.longestStudyStreakDays, 1);
-  assert.equal(state.activityDays.length, 1);
-  assert.equal(
-    state.activityDays[0].dayStartedAt,
-    new Date(2026, 7, 10).toISOString(),
-  );
-  assert.equal(Object.hasOwn(state.activityDays[0], "date"), false);
-  assert.equal(state.activityDays[0].ratingCount, 10);
+  assert.equal(state.activityDays[0].ratedQuestionIds.length, 20);
+  assert.equal(state.activityDays[0].localDay, "2026-08-10");
 
+  state = {
+    ...state,
+    views: {
+      ...state.views,
+      all: {
+        ...state.views.all,
+        currentQuestionId: ids[0],
+        history: [ids[0]],
+        historyIndex: 0,
+      },
+    },
+  };
   state = applyRating(
     state,
     "mastered",
-    [1],
-    "2026-08-10T12:10:00.000Z",
+    ids,
+    "2026-08-10T12:20:00.000Z",
     () => 0,
   ).state;
   assert.equal(state.profile.studyStreakDays, 1);
+  assert.equal(state.activityDays[0].ratedQuestionIds.length, 20);
+  assert.equal(state.activityDays[0].ratingCount, 21);
 
   const xpBeforeRollback = state.profile.totalXp;
   const lastPracticeAt = state.profile.lastPracticeAt;
+  state = {
+    ...state,
+    views: {
+      ...state.views,
+      all: {
+        ...state.views.all,
+        currentQuestionId: ids[21],
+        history: [ids[21]],
+        historyIndex: 0,
+      },
+    },
+  };
   state = applyRating(
     state,
     "hard",
-    [1],
+    ids,
     "2026-08-09T12:00:00.000Z",
     () => 0,
   ).state;
@@ -716,13 +835,26 @@ test("activity history caps at 400 UTC day buckets", () => {
 });
 
 test("seven consecutive qualified local days update current and longest streaks", () => {
-  let state = createInitialState([1], () => 0);
+  const ids = Array.from({ length: 20 }, (_, index) => index + 1);
+  let state = createInitialState(ids, () => 0);
   for (let day = 1; day <= 7; day += 1) {
-    for (let rating = 0; rating < 10; rating += 1) {
+    for (let rating = 0; rating < 20; rating += 1) {
+      state = {
+        ...state,
+        views: {
+          ...state.views,
+          all: {
+            ...state.views.all,
+            currentQuestionId: ids[rating],
+            history: [ids[rating]],
+            historyIndex: 0,
+          },
+        },
+      };
       state = applyRating(
         state,
         "mastered",
-        [1],
+        ids,
         new Date(2026, 7, day, 12, rating).toISOString(),
         () => 0,
       ).state;
@@ -1262,7 +1394,11 @@ test("browser reveal exposes ratings and a rating awards XP after 300 ms", () =>
   assert.equal(documentObject.elements.get("question-text").focusCount, 1);
   assert.match(
     documentObject.elements.get("live-region").textContent,
-    /\+2 XP/,
+    /没关系，继续努力/,
+  );
+  assert.match(
+    documentObject.elements.get("live-region").textContent,
+    /获得 2 XP/,
   );
 });
 
@@ -1284,7 +1420,14 @@ test("rating feedback is visible and a completed round gets a summary", () => {
 
   const feedback = documentObject.elements.get("rating-feedback");
   assert.equal(feedback.hidden, false);
-  assert.match(feedback.textContent, /不会.*\+2 XP/);
+  assert.equal(
+    documentObject.elements.get("rating-feedback-primary").textContent,
+    RATING_PRIMARY_FEEDBACK.hard,
+  );
+  assert.match(
+    documentObject.elements.get("rating-feedback-secondary").textContent,
+    /\+2 XP/,
+  );
 
   browserGlobal.runTimers();
   const summary = documentObject.elements.get("round-summary");
@@ -1775,9 +1918,9 @@ test("storage failures and corrupt payloads degrade without throwing", () => {
   assert.match(corrupt.warning, /已重置/);
 });
 
-test("v2 storage wins and legacy migration runs only when v2 is absent", () => {
+test("v3 storage wins and older keys migrate only when v3 is absent", () => {
   const ids = [1, 2, 3];
-  const v2 = createInitialState(ids, () => 0);
+  const v3 = createInitialState(ids, () => 0);
   const legacy = {
     version: 1,
     mode: "all",
@@ -1786,7 +1929,8 @@ test("v2 storage wins and legacy migration runs only when v2 is absent", () => {
     hardIds: [2],
   };
   const both = makeStorage({
-    [STORAGE_KEY]: JSON.stringify(v2),
+    [STORAGE_KEY]: JSON.stringify(v3),
+    [PREVIOUS_STORAGE_KEY]: JSON.stringify({ ...v3, version: 2 }),
     [LEGACY_STORAGE_KEY]: JSON.stringify(legacy),
   });
 
@@ -1808,17 +1952,18 @@ test("v2 storage wins and legacy migration runs only when v2 is absent", () => {
     migrated.state,
   );
 
-  const invalidV2 = makeStorage({
+  const invalidV3 = makeStorage({
     [STORAGE_KEY]: "{broken",
+    [PREVIOUS_STORAGE_KEY]: JSON.stringify({ ...v3, version: 2 }),
     [LEGACY_STORAGE_KEY]: JSON.stringify(legacy),
   });
-  const recovered = loadStoredState(invalidV2, ids, () => 0);
+  const recovered = loadStoredState(invalidV3, ids, () => 0);
   assert.equal(recovered.migrated, false);
   assert.equal(getCurrentQuestionId(recovered.state), 2);
   assert.deepEqual(recovered.state.hardIds, []);
 });
 
-test("saving uses the v2 key and never persists derived achievements", () => {
+test("saving uses the v3 key and never persists derived achievements", () => {
   const storage = makeStorage();
   const state = {
     ...createInitialState([1], () => 0),
@@ -1835,7 +1980,7 @@ test("saving uses the v2 key and never persists derived achievements", () => {
   assert.equal(Object.hasOwn(persisted, "achievements"), false);
 });
 
-test("export payloads are timestamped v2 snapshots without derived fields", () => {
+test("export payloads are timestamped v3 snapshots without derived fields", () => {
   const state = {
     ...createInitialState([1, 2, 3], () => 0),
     achievements: [{ id: "derived" }],
@@ -1851,13 +1996,13 @@ test("export payloads are timestamped v2 snapshots without derived fields", () =
     "exportedAt",
     "data",
   ]);
-  assert.equal(payload.schemaVersion, 2);
+  assert.equal(payload.schemaVersion, 3);
   assert.equal(payload.exportedAt, "2026-08-09T09:00:00.000Z");
   assert.notEqual(payload.data, state);
   assert.equal(Object.hasOwn(payload.data, "achievements"), false);
 });
 
-test("strict import accepts only valid v2 exports at or below 1 MB", () => {
+test("strict import accepts valid v3 exports at or below 1 MB", () => {
   const ids = [1, 2, 3];
   const state = createInitialState(ids, () => 0);
   const serialized = JSON.stringify(
@@ -1866,8 +2011,9 @@ test("strict import accepts only valid v2 exports at or below 1 MB", () => {
 
   const imported = parseProgressImport(serialized, ids, () => 0);
 
-  assert.deepEqual(imported, state);
-  assert.notEqual(imported, state);
+  assert.deepEqual(imported.state, state);
+  assert.equal(imported.migratedFromV2, false);
+  assert.notEqual(imported.state, state);
   assert.equal(MAX_IMPORT_BYTES, 1_000_000);
 });
 
@@ -1885,12 +2031,12 @@ test("invalid import is rejected without mutating current progress", async (cont
       data: current,
     }),
     "invalid export timestamp": JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       exportedAt: "yesterday",
       data: current,
     }),
     "invalid state": JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       exportedAt: "2026-08-09T09:00:00.000Z",
       data: { ...current, deck: [1, 1, 3] },
     }),
@@ -1989,6 +2135,12 @@ test("profile markup keeps units and exposes level progress semantics", () => {
   );
   assert.match(
     html,
+    /id="daily-progress"[^>]*role="progressbar"[^>]*aria-valuemax="20"/,
+  );
+  assert.match(html, /id="study-records-button"/);
+  assert.doesNotMatch(html, /分类即将上线/);
+  assert.match(
+    html,
     /class="xp-track"[^>]*role="progressbar"[^>]*aria-label="等级经验"/,
   );
   assert.doesNotMatch(
@@ -2002,4 +2154,209 @@ test("achievement items render into a semantic list", () => {
 
   assert.match(html, /<ul\b[^>]*id="achievements-list"/);
   assert.doesNotMatch(html, /<div\b[^>]*id="achievements-list"/);
+});
+
+test("mascot mood follows local time until check-in completes", () => {
+  const unfinished = { completed: false };
+  assert.equal(
+    deriveMascotMood(unfinished, new Date(2026, 7, 10, 14, 59, 59)),
+    "normal",
+  );
+  assert.equal(
+    deriveMascotMood(unfinished, new Date(2026, 7, 10, 15, 0, 0)),
+    "anxious",
+  );
+  assert.equal(
+    deriveMascotMood(unfinished, new Date(2026, 7, 10, 20, 59, 59)),
+    "anxious",
+  );
+  assert.equal(
+    deriveMascotMood(unfinished, new Date(2026, 7, 10, 21, 0, 0)),
+    "frantic",
+  );
+  assert.equal(
+    deriveMascotMood({ completed: true }, new Date(2026, 7, 10, 22, 0, 0)),
+    "normal",
+  );
+  assert.equal(MASCOT_MOOD_LABELS.frantic, "抓狂");
+  assert.equal(CHECKIN_SUCCESS_LABEL, "今日打卡成功");
+});
+
+test("rating announcement keeps encouragement primary", () => {
+  assert.equal(
+    buildRatingAnnouncement(
+      "mastered",
+      { xpEarned: 20, leveledUp: false },
+      { completed: true, displayCount: 20, goal: 20 },
+    ),
+    "已掌握，干得漂亮。获得 20 XP。今日打卡成功，20 / 20。",
+  );
+  assert.equal(RATING_PRIMARY_FEEDBACK.fuzzy, "加油，已经很棒了");
+  assert.equal(RATING_SECONDARY_FEEDBACK.hard, "+2 XP · 7 次后复习");
+});
+
+test("notebook derives hard and fuzzy items and drops mastered", () => {
+  const state = createInitialState([1, 2, 3], () => 0);
+  state.questionStats = {
+    1: {
+      attempts: 1,
+      hardCount: 1,
+      fuzzyCount: 0,
+      masteredCount: 0,
+      lastRating: "hard",
+      lastReviewedAt: "2026-08-10T12:00:00.000Z",
+    },
+    2: {
+      attempts: 1,
+      hardCount: 0,
+      fuzzyCount: 1,
+      masteredCount: 0,
+      lastRating: "fuzzy",
+      lastReviewedAt: "2026-08-10T13:00:00.000Z",
+    },
+    3: {
+      attempts: 1,
+      hardCount: 0,
+      fuzzyCount: 0,
+      masteredCount: 1,
+      lastRating: "mastered",
+      lastReviewedAt: "2026-08-10T14:00:00.000Z",
+    },
+  };
+  const questionsById = new Map(makeQuestions().map((item) => [item.id, item]));
+  const items = deriveNotebookItems(state, questionsById);
+  assert.deepEqual(
+    items.map((item) => item.questionId),
+    [2, 1],
+  );
+});
+
+test("calendar marks checked partial missed future and today", () => {
+  const state = createInitialState([1], () => 0);
+  state.activityDays = [
+    {
+      localDay: "2026-08-01",
+      dayStartedAt: new Date(2026, 7, 1).toISOString(),
+      ratingCount: 20,
+      ratedQuestionIds: Array.from({ length: 20 }, (_, index) => index + 1),
+    },
+    {
+      localDay: "2026-08-09",
+      dayStartedAt: new Date(2026, 7, 9).toISOString(),
+      ratingCount: 3,
+      ratedQuestionIds: [1, 2, 3],
+    },
+  ];
+  const month = deriveCalendarMonth(
+    state,
+    { year: 2026, monthIndex: 7 },
+    new Date(2026, 7, 10, 12),
+  );
+  const byDay = new Map(
+    month.cells.filter((cell) => cell.kind === "day").map((cell) => [cell.day, cell]),
+  );
+  assert.equal(byDay.get(1).status, "checked");
+  assert.equal(byDay.get(9).status, "partial");
+  assert.equal(byDay.get(10).status, "today");
+  assert.equal(byDay.get(11).status, "future");
+  assert.equal(byDay.get(2).status, "missed");
+});
+
+test("v2 progress migrates with empty rated IDs and reset streaks", () => {
+  const ids = [1, 2, 3];
+  const base = createInitialState(ids, () => 0);
+  const v2 = {
+    ...base,
+    version: 2,
+    ratingCount: 12,
+    profile: {
+      ...base.profile,
+      totalXp: 240,
+      studyStreakDays: 4,
+      longestStudyStreakDays: 4,
+      lastPracticeAt: "2026-08-10T12:00:00.000Z",
+    },
+    activityDays: [
+      {
+        dayStartedAt: new Date(2026, 7, 10).toISOString(),
+        ratingCount: 12,
+      },
+    ],
+    questionStats: {
+      1: {
+        attempts: 12,
+        hardCount: 0,
+        fuzzyCount: 0,
+        masteredCount: 12,
+        lastRating: "mastered",
+        lastReviewedAt: "2026-08-10T12:00:00.000Z",
+      },
+    },
+  };
+  const migrated = migrateV2State(v2, ids);
+  assert.equal(migrated.version, 3);
+  assert.equal(migrated.profile.studyStreakDays, 0);
+  assert.equal(migrated.profile.longestStudyStreakDays, 0);
+  assert.equal(migrated.profile.totalXp, 240);
+  assert.deepEqual(migrated.activityDays[0].ratedQuestionIds, []);
+  assert.equal(migrated.activityDays[0].localDay, "2026-08-10");
+
+  const storage = makeStorage({
+    [PREVIOUS_STORAGE_KEY]: JSON.stringify(v2),
+  });
+  const loaded = loadStoredState(storage, ids, () => 0);
+  assert.equal(loaded.migrated, true);
+  assert.match(loaded.warning, /20 道不同题/);
+  assert.equal(storage.values.has(PREVIOUS_STORAGE_KEY), true);
+  assert.equal(V2_MIGRATION_NOTICE.includes("20"), true);
+});
+
+test("study records dialog opens calendar and notebook practice reuses hard mode", () => {
+  const documentObject = makeFakeDocument();
+  let initial = createInitialState([1, 2, 3], () => 0);
+  initial = {
+    ...initial,
+    views: {
+      ...initial.views,
+      all: {
+        ...initial.views.all,
+        currentQuestionId: 2,
+        history: [2],
+        historyIndex: 0,
+      },
+    },
+  };
+  initial = applyRating(
+    initial,
+    "hard",
+    [1, 2, 3],
+    "2026-08-10T12:00:00.000Z",
+    () => 0,
+  ).state;
+  const storage = makeStorage({
+    [STORAGE_KEY]: JSON.stringify(initial),
+  });
+  const browserGlobal = makeBrowserGlobal({
+    reducedMotion: true,
+    storage,
+  });
+  const app = startBrowserApp(documentObject, browserGlobal);
+  documentObject.elements.get("study-records-button").click();
+  assert.equal(documentObject.elements.get("study-records-dialog").open, true);
+  assert.equal(
+    documentObject.elements.get("tab-calendar").getAttribute("aria-selected"),
+    "true",
+  );
+  documentObject.elements.get("tab-notebook").click();
+  assert.equal(
+    documentObject.elements.get("panel-notebook").hidden,
+    false,
+  );
+  const row = documentObject.elements.get("notebook-list").children[0];
+  assert.equal(Boolean(row), true);
+  const button = row.children.find((child) => child.tagName === "BUTTON");
+  button.click();
+  assert.equal(app.getState().mode, "hard");
+  assert.equal(getCurrentQuestionId(app.getState()), 2);
+  assert.equal(documentObject.elements.get("mascot-status").textContent, "普通");
 });

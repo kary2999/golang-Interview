@@ -3,13 +3,33 @@
 (function initializeGoInterview(globalScope) {
   "use strict";
 
-  const STATE_VERSION = 2;
-  const STORAGE_KEY = "go-interview-progress-v2";
+  const STATE_VERSION = 3;
+  const STORAGE_KEY = "go-interview-progress-v3";
+  const PREVIOUS_STORAGE_KEY = "go-interview-progress-v2";
   const LEGACY_STORAGE_KEY = "go-interview-progress-v1";
   const MAX_HISTORY_LENGTH = 200;
   const MAX_ACTIVITY_DAYS = 400;
   const MAX_IMPORT_BYTES = 1_000_000;
-  const DAILY_STREAK_RATINGS = 10;
+  const DAILY_CHECKIN_UNIQUE_QUESTIONS = 20;
+  const RATING_PRIMARY_FEEDBACK = Object.freeze({
+    mastered: "已掌握，干得漂亮",
+    fuzzy: "加油，已经很棒了",
+    hard: "没关系，继续努力",
+  });
+  const RATING_SECONDARY_FEEDBACK = Object.freeze({
+    mastered: "+20 XP · 已移出待复习",
+    fuzzy: "+8 XP · 20 次后复习",
+    hard: "+2 XP · 7 次后复习",
+  });
+  const MASCOT_MOOD_LABELS = Object.freeze({
+    normal: "普通",
+    anxious: "焦虑",
+    frantic: "抓狂",
+  });
+  const CHECKIN_SUCCESS_LABEL = "今日打卡成功";
+  const V2_MIGRATION_NOTICE = (
+    "打卡规则已升级为每天 20 道不同题；训练与 XP 已保留，连续打卡从新规则重新计算。"
+  );
   const RATING_CONFIG = Object.freeze({
     hard: Object.freeze({ xp: 2, reviewAfter: 7 }),
     fuzzy: Object.freeze({ xp: 8, reviewAfter: 20 }),
@@ -428,38 +448,83 @@
     };
   }
 
-  function updateActivity(state, date) {
-    const dayStartedAt = localDayStartedAt(date);
-    const day = localDayKey(date);
-    const existing = state.activityDays.find(
-      (entry) => entry.dayStartedAt === dayStartedAt,
+  function isValidLocalDayKey(value) {
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      return false;
+    }
+    const [yearText, monthText, dayText] = value.split("-");
+    const year = Number(yearText);
+    const month = Number(monthText);
+    const day = Number(dayText);
+    const probe = new Date(Date.UTC(year, month - 1, day));
+    return (
+      Number.isFinite(probe.getTime())
+      && probe.getUTCFullYear() === year
+      && probe.getUTCMonth() + 1 === month
+      && probe.getUTCDate() === day
     );
-    const previousCount = existing === undefined ? 0 : existing.ratingCount;
+  }
+
+  function uniqueSortedIds(ids) {
+    return [...new Set(ids)].sort((left, right) => left - right);
+  }
+
+  function activityDayIsQualified(entry) {
+    return (
+      Array.isArray(entry.ratedQuestionIds)
+      && entry.ratedQuestionIds.length >= DAILY_CHECKIN_UNIQUE_QUESTIONS
+    );
+  }
+
+  function updateActivityDay(state, questionId, date) {
+    if (!(date instanceof Date) || !Number.isFinite(date.getTime())) {
+      return {
+        activityDays: state.activityDays.map((entry) => ({
+          ...entry,
+          ratedQuestionIds: entry.ratedQuestionIds.slice(),
+        })),
+        studyStreakDays: state.profile.studyStreakDays,
+        longestStudyStreakDays: state.profile.longestStudyStreakDays,
+        skipped: true,
+        checkInCompleted: false,
+      };
+    }
+
+    const day = localDayKey(date);
+    const dayStartedAt = localDayStartedAt(date);
+    const existing = state.activityDays.find(
+      (entry) => entry.localDay === day,
+    );
+    const previousIds = existing === undefined
+      ? []
+      : existing.ratedQuestionIds.slice();
+    const previousQualified = activityDayIsQualified({
+      ratedQuestionIds: previousIds,
+    });
+    const ratedQuestionIds = uniqueSortedIds([...previousIds, questionId]);
     const updatedEntry = {
-      dayStartedAt,
-      ratingCount: previousCount + 1,
+      localDay: day,
+      dayStartedAt: existing === undefined ? dayStartedAt : existing.dayStartedAt,
+      ratingCount: (existing === undefined ? 0 : existing.ratingCount) + 1,
+      ratedQuestionIds,
     };
     let activityDays = state.activityDays
-      .filter((entry) => entry.dayStartedAt !== dayStartedAt)
+      .filter((entry) => entry.localDay !== day)
       .concat(updatedEntry)
-      .sort(
-        (left, right) => (
-          left.dayStartedAt.localeCompare(right.dayStartedAt)
-        ),
-      );
+      .sort((left, right) => left.localDay.localeCompare(right.localDay));
     if (activityDays.length > MAX_ACTIVITY_DAYS) {
       activityDays = activityDays.slice(-MAX_ACTIVITY_DAYS);
     }
 
     let studyStreakDays = state.profile.studyStreakDays;
     let longestStudyStreakDays = state.profile.longestStudyStreakDays;
-    if (
-      previousCount < DAILY_STREAK_RATINGS
-      && updatedEntry.ratingCount >= DAILY_STREAK_RATINGS
-    ) {
+    const checkInCompleted = (
+      !previousQualified && activityDayIsQualified(updatedEntry)
+    );
+    if (checkInCompleted) {
       const previousQualifiedDays = state.activityDays
-        .filter((entry) => entry.ratingCount >= DAILY_STREAK_RATINGS)
-        .map((entry) => localDayKey(new Date(entry.dayStartedAt)))
+        .filter((entry) => activityDayIsQualified(entry))
+        .map((entry) => entry.localDay)
         .sort();
       const latestQualifiedDay = previousQualifiedDays.at(-1);
       if (latestQualifiedDay === undefined || day > latestQualifiedDay) {
@@ -480,7 +545,220 @@
       activityDays,
       studyStreakDays,
       longestStudyStreakDays,
+      skipped: false,
+      checkInCompleted,
     };
+  }
+
+  function deriveDailyCheckIn(state, now = new Date()) {
+    const today = localDayKey(now instanceof Date ? now : new Date(now));
+    const activity = state.activityDays.find((entry) => entry.localDay === today);
+    const uniqueCount = activity === undefined
+      ? 0
+      : activity.ratedQuestionIds.length;
+    const displayCount = Math.min(uniqueCount, DAILY_CHECKIN_UNIQUE_QUESTIONS);
+    return {
+      localDay: today,
+      uniqueCount,
+      displayCount,
+      goal: DAILY_CHECKIN_UNIQUE_QUESTIONS,
+      completed: uniqueCount >= DAILY_CHECKIN_UNIQUE_QUESTIONS,
+      ratingCount: activity === undefined ? 0 : activity.ratingCount,
+    };
+  }
+
+  function deriveMascotMood(checkIn, now = new Date()) {
+    if (checkIn && checkIn.completed) {
+      return "normal";
+    }
+    const date = now instanceof Date ? now : new Date(now);
+    const minutes = date.getHours() * 60 + date.getMinutes();
+    if (minutes >= 21 * 60) {
+      return "frantic";
+    }
+    if (minutes >= 15 * 60) {
+      return "anxious";
+    }
+    return "normal";
+  }
+
+  function monthKeyFromParts(year, monthIndex) {
+    return `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
+  }
+
+  function parseLocalDayParts(localDay) {
+    const [yearText, monthText, dayText] = localDay.split("-");
+    return {
+      year: Number(yearText),
+      month: Number(monthText),
+      day: Number(dayText),
+    };
+  }
+
+  function shiftMonth(year, monthIndex, delta) {
+    const date = new Date(Date.UTC(year, monthIndex + delta, 1));
+    return {
+      year: date.getUTCFullYear(),
+      monthIndex: date.getUTCMonth(),
+    };
+  }
+
+  function deriveCalendarMonth(state, visibleMonth, now = new Date()) {
+    const today = localDayKey(now instanceof Date ? now : new Date(now));
+    const todayParts = parseLocalDayParts(today);
+    const activityByDay = new Map(
+      state.activityDays.map((entry) => [entry.localDay, entry]),
+    );
+    const activityDays = state.activityDays.map((entry) => entry.localDay).sort();
+    const earliestDay = activityDays[0] || today;
+    const latestDay = activityDays.at(-1) || today;
+    const earliestParts = parseLocalDayParts(earliestDay);
+    const latestParts = parseLocalDayParts(latestDay);
+    const minMonth = {
+      year: earliestParts.year,
+      monthIndex: earliestParts.month - 1,
+    };
+    const maxMonthCandidate = latestDay > today
+      ? {
+        year: latestParts.year,
+        monthIndex: latestParts.month - 1,
+      }
+      : {
+        year: todayParts.year,
+        monthIndex: todayParts.month - 1,
+      };
+    const maxMonth = maxMonthCandidate;
+
+    let year = visibleMonth && Number.isInteger(visibleMonth.year)
+      ? visibleMonth.year
+      : todayParts.year;
+    let monthIndex = visibleMonth && Number.isInteger(visibleMonth.monthIndex)
+      ? visibleMonth.monthIndex
+      : todayParts.month - 1;
+    const minKey = monthKeyFromParts(minMonth.year, minMonth.monthIndex);
+    const maxKey = monthKeyFromParts(maxMonth.year, maxMonth.monthIndex);
+    let currentKey = monthKeyFromParts(year, monthIndex);
+    if (currentKey < minKey) {
+      year = minMonth.year;
+      monthIndex = minMonth.monthIndex;
+      currentKey = minKey;
+    }
+    if (currentKey > maxKey) {
+      year = maxMonth.year;
+      monthIndex = maxMonth.monthIndex;
+      currentKey = maxKey;
+    }
+
+    const firstOfMonth = new Date(Date.UTC(year, monthIndex, 1));
+    const daysInMonth = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
+    const mondayBasedWeekday = (firstOfMonth.getUTCDay() + 6) % 7;
+    const cells = [];
+    for (let index = 0; index < mondayBasedWeekday; index += 1) {
+      cells.push({ kind: "pad" });
+    }
+    for (let day = 1; day <= daysInMonth; day += 1) {
+      const localDay = (
+        `${year}-${String(monthIndex + 1).padStart(2, "0")}-`
+        + `${String(day).padStart(2, "0")}`
+      );
+      const activity = activityByDay.get(localDay);
+      const isToday = localDay === today;
+      let status = "empty";
+      let progressText = "";
+      if (activity !== undefined) {
+        if (activityDayIsQualified(activity)) {
+          status = "checked";
+          progressText = (
+            `${DAILY_CHECKIN_UNIQUE_QUESTIONS} / ${DAILY_CHECKIN_UNIQUE_QUESTIONS}`
+          );
+        } else if (activity.ratedQuestionIds.length > 0) {
+          status = "partial";
+          progressText = (
+            `${Math.min(
+              activity.ratedQuestionIds.length,
+              DAILY_CHECKIN_UNIQUE_QUESTIONS,
+            )} / ${DAILY_CHECKIN_UNIQUE_QUESTIONS}`
+          );
+        } else if (activity.ratingCount > 0) {
+          status = "unverified";
+          progressText = "有训练，未验证";
+        } else {
+          status = "empty";
+        }
+      } else if (localDay > today) {
+        status = "future";
+      } else if (localDay < today && localDay >= earliestDay) {
+        status = "missed";
+      } else {
+        status = "empty";
+      }
+      if (isToday && activity === undefined) {
+        status = "today";
+        progressText = `0 / ${DAILY_CHECKIN_UNIQUE_QUESTIONS}`;
+      }
+      cells.push({
+        kind: "day",
+        localDay,
+        day,
+        status,
+        progressText,
+        isToday,
+        clockSkewFuture: localDay > today && activity !== undefined,
+      });
+    }
+
+    return {
+      year,
+      monthIndex,
+      title: `${year} 年 ${monthIndex + 1} 月`,
+      canGoPrevious: currentKey > minKey,
+      canGoNext: currentKey < maxKey,
+      cells,
+    };
+  }
+
+  function deriveNotebookItems(state, questionsById) {
+    const items = [];
+    for (const [key, stats] of Object.entries(state.questionStats)) {
+      if (stats.lastRating !== "hard" && stats.lastRating !== "fuzzy") {
+        continue;
+      }
+      const questionId = Number(key);
+      const question = questionsById instanceof Map
+        ? questionsById.get(questionId)
+        : questionsById[questionId];
+      if (question === undefined) {
+        continue;
+      }
+      items.push({
+        questionId,
+        question: question.question,
+        lastRating: stats.lastRating,
+        lastReviewedAt: stats.lastReviewedAt,
+      });
+    }
+    items.sort((left, right) => {
+      if (left.lastReviewedAt === right.lastReviewedAt) {
+        return left.questionId - right.questionId;
+      }
+      return left.lastReviewedAt < right.lastReviewedAt ? 1 : -1;
+    });
+    return items;
+  }
+
+  function buildRatingAnnouncement(rating, outcome, checkIn) {
+    const primary = RATING_PRIMARY_FEEDBACK[rating];
+    const xpLine = `获得 ${outcome.xpEarned} XP`;
+    const parts = [primary, xpLine];
+    if (outcome.leveledUp) {
+      parts.push("等级提升");
+    }
+    if (checkIn.completed) {
+      parts.push(
+        `${CHECKIN_SUCCESS_LABEL}，${checkIn.displayCount} / ${checkIn.goal}`,
+      );
+    }
+    return `${parts[0]}。${parts.slice(1).join("。")}。`.replace("。。", "。");
   }
 
   function appendHistory(allView, questionId) {
@@ -601,7 +879,7 @@
     const ratingCount = state.ratingCount + 1;
     const previousLevel = deriveLevel(state.profile.totalXp).level;
     const totalXp = state.profile.totalXp + config.xp;
-    const activity = updateActivity(state, timestamp.date);
+    const activity = updateActivityDay(state, questionId, timestamp.date);
     const latestPracticeAt = (
       state.profile.lastPracticeAt === null
       || timestamp.iso > state.profile.lastPracticeAt
@@ -716,6 +994,7 @@
         xpEarned: config.xp,
         leveledUp: deriveLevel(totalXp).level > previousLevel,
         roundCompleted,
+        checkInCompleted: activity.checkInCompleted,
       },
     };
   }
@@ -809,7 +1088,133 @@
     return definitions.filter((achievement) => achievement.unlocked);
   }
 
-  function migrateLegacyState(candidate, questionIds) {
+  function cloneTrainingState(candidate) {
+    return {
+      mode: candidate.mode,
+      deck: candidate.deck.slice(),
+      deckIndex: candidate.deckIndex,
+      views: {
+        all: {
+          currentQuestionId: candidate.views.all.currentQuestionId,
+          history: candidate.views.all.history.slice(),
+          historyIndex: candidate.views.all.historyIndex,
+        },
+        hard: {
+          deck: candidate.views.hard.deck.slice(),
+          index: candidate.views.hard.index,
+        },
+      },
+      hardIds: candidate.hardIds.slice(),
+      reviewQueue: candidate.reviewQueue.map((entry) => ({ ...entry })),
+      ratingCount: candidate.ratingCount,
+      round: {
+        number: candidate.round.number,
+        seenIds: candidate.round.seenIds.slice(),
+        xpEarned: candidate.round.xpEarned,
+        ratings: { ...candidate.round.ratings },
+      },
+      profile: {
+        ...candidate.profile,
+        studyStreakDays: 0,
+        longestStudyStreakDays: 0,
+      },
+      questionStats: Object.fromEntries(
+        Object.entries(candidate.questionStats).map(
+          ([key, stats]) => [key, { ...stats }],
+        ),
+      ),
+    };
+  }
+
+  function migrateV2ActivityDays(activityDays) {
+    const merged = new Map();
+    for (const entry of activityDays) {
+      const localDay = localDayKey(new Date(entry.dayStartedAt));
+      const existing = merged.get(localDay);
+      if (existing === undefined) {
+        merged.set(localDay, {
+          localDay,
+          dayStartedAt: entry.dayStartedAt,
+          ratingCount: entry.ratingCount,
+          ratedQuestionIds: [],
+        });
+        continue;
+      }
+      existing.ratingCount += entry.ratingCount;
+      if (entry.dayStartedAt < existing.dayStartedAt) {
+        existing.dayStartedAt = entry.dayStartedAt;
+      }
+    }
+    return [...merged.values()]
+      .sort((left, right) => left.localDay.localeCompare(right.localDay))
+      .slice(-MAX_ACTIVITY_DAYS);
+  }
+
+  function isValidV2State(candidate, questionIds) {
+    const ids = normalizeQuestionIds(questionIds);
+    const validIdSet = new Set(ids);
+    if (
+      !isPlainObject(candidate)
+      || candidate.version !== 2
+      || !VALID_MODES.has(candidate.mode)
+      || !isCompletePermutation(candidate.deck, ids)
+      || !Number.isInteger(candidate.deckIndex)
+      || candidate.deckIndex < 0
+      || candidate.deckIndex > candidate.deck.length
+      || !hasValidAllView(candidate, validIdSet)
+      || !hasValidHardState(candidate, validIdSet)
+      || !hasValidReviewQueue(candidate, validIdSet)
+      || !isNonnegativeInteger(candidate.ratingCount)
+      || !hasValidRound(candidate, validIdSet)
+      || !hasValidProfile(candidate)
+      || !hasValidV2ActivityDays(candidate)
+      || !hasValidQuestionStats(candidate, validIdSet)
+    ) {
+      return false;
+    }
+    const activityRatings = candidate.activityDays.reduce(
+      (total, entry) => total + entry.ratingCount,
+      0,
+    );
+    const roundRatingCount = (
+      candidate.round.ratings.hard
+      + candidate.round.ratings.fuzzy
+      + candidate.round.ratings.mastered
+    );
+    const consumedDeck = candidate.deck.slice(0, candidate.deckIndex);
+    return !(
+      activityRatings > candidate.ratingCount
+      || roundRatingCount > candidate.ratingCount
+      || candidate.round.xpEarned > candidate.profile.totalXp
+      || candidate.profile.masteryCombo > candidate.ratingCount
+      || candidate.round.seenIds.length !== consumedDeck.length
+      || candidate.round.seenIds.some(
+        (id, index) => id !== consumedDeck[index],
+      )
+      || (
+        candidate.ratingCount === 0
+        && candidate.profile.lastPracticeAt !== null
+      )
+      || (
+        candidate.ratingCount > 0
+        && candidate.profile.lastPracticeAt === null
+      )
+    );
+  }
+
+  function migrateV2State(candidate, questionIds) {
+    if (!isValidV2State(candidate, questionIds)) {
+      throw new TypeError("v2 progress is invalid");
+    }
+    const training = cloneTrainingState(candidate);
+    return {
+      version: STATE_VERSION,
+      ...training,
+      activityDays: migrateV2ActivityDays(candidate.activityDays),
+    };
+  }
+
+    function migrateLegacyState(candidate, questionIds) {
     const ids = normalizeQuestionIds(questionIds);
     if (
       !isPlainObject(candidate)
@@ -1014,7 +1419,44 @@
     );
   }
 
-  function hasValidActivityDays(candidate) {
+  function hasValidActivityDays(candidate, validIdSet) {
+    if (
+      !Array.isArray(candidate.activityDays)
+      || candidate.activityDays.length > MAX_ACTIVITY_DAYS
+    ) {
+      return false;
+    }
+    const days = new Set();
+    let previousLocalDay = "";
+    for (const entry of candidate.activityDays) {
+      if (
+        !isPlainObject(entry)
+        || !isValidLocalDayKey(entry.localDay)
+        || days.has(entry.localDay)
+        || entry.localDay <= previousLocalDay
+        || !isCanonicalIsoTimestamp(entry.dayStartedAt)
+        || !Number.isInteger(entry.ratingCount)
+        || entry.ratingCount <= 0
+        || !Array.isArray(entry.ratedQuestionIds)
+        || entry.ratedQuestionIds.length > entry.ratingCount
+        || new Set(entry.ratedQuestionIds).size !== entry.ratedQuestionIds.length
+        || entry.ratedQuestionIds.some(
+          (id, index, list) => (
+            !Number.isInteger(id)
+            || !validIdSet.has(id)
+            || (index > 0 && id <= list[index - 1])
+          ),
+        )
+      ) {
+        return false;
+      }
+      days.add(entry.localDay);
+      previousLocalDay = entry.localDay;
+    }
+    return true;
+  }
+
+  function hasValidV2ActivityDays(candidate) {
     if (
       !Array.isArray(candidate.activityDays)
       || candidate.activityDays.length > MAX_ACTIVITY_DAYS
@@ -1031,6 +1473,8 @@
         || entry.dayStartedAt <= previousDayStartedAt
         || !Number.isInteger(entry.ratingCount)
         || entry.ratingCount <= 0
+        || Object.hasOwn(entry, "ratedQuestionIds")
+        || Object.hasOwn(entry, "localDay")
       ) {
         return false;
       }
@@ -1100,7 +1544,7 @@
       || !isNonnegativeInteger(candidate.ratingCount)
       || !hasValidRound(candidate, validIdSet)
       || !hasValidProfile(candidate)
-      || !hasValidActivityDays(candidate)
+      || !hasValidActivityDays(candidate, validIdSet)
       || !hasValidQuestionStats(candidate, validIdSet)
     ) {
       return fallback();
@@ -1164,7 +1608,12 @@
           ratings: { ...candidate.round.ratings },
         },
         profile: { ...candidate.profile },
-        activityDays: candidate.activityDays.map((entry) => ({ ...entry })),
+        activityDays: candidate.activityDays.map((entry) => ({
+          localDay: entry.localDay,
+          dayStartedAt: entry.dayStartedAt,
+          ratingCount: entry.ratingCount,
+          ratedQuestionIds: entry.ratedQuestionIds.slice(),
+        })),
         questionStats: Object.fromEntries(
           Object.entries(candidate.questionStats).map(
             ([key, stats]) => [key, { ...stats }],
@@ -1202,7 +1651,12 @@
         ratings: { ...state.round.ratings },
       },
       profile: { ...state.profile },
-      activityDays: state.activityDays.map((entry) => ({ ...entry })),
+      activityDays: state.activityDays.map((entry) => ({
+        localDay: entry.localDay,
+        dayStartedAt: entry.dayStartedAt,
+        ratingCount: entry.ratingCount,
+        ratedQuestionIds: entry.ratedQuestionIds.slice(),
+      })),
       questionStats: Object.fromEntries(
         Object.entries(state.questionStats).map(
           ([key, stats]) => [key, { ...stats }],
@@ -1265,17 +1719,28 @@
     }
     if (
       !isPlainObject(payload)
-      || payload.schemaVersion !== STATE_VERSION
       || !isCanonicalIsoTimestamp(payload.exportedAt)
       || !Object.hasOwn(payload, "data")
     ) {
       throw new TypeError("导入文件版本或导出时间无效。");
     }
-    const normalized = normalizeState(payload.data, questionIds, random);
-    if (normalized.recovered) {
-      throw new TypeError("导入进度结构无效。");
+    if (payload.schemaVersion === STATE_VERSION) {
+      const normalized = normalizeState(payload.data, questionIds, random);
+      if (normalized.recovered) {
+        throw new TypeError("导入进度结构无效。");
+      }
+      return {
+        state: normalized.state,
+        migratedFromV2: false,
+      };
     }
-    return normalized.state;
+    if (payload.schemaVersion === 2) {
+      return {
+        state: migrateV2State(payload.data, questionIds),
+        migratedFromV2: true,
+      };
+    }
+    throw new TypeError("导入文件版本或导出时间无效。");
   }
 
   function parseImportPayload(
@@ -1283,7 +1748,7 @@
     questionIds,
     random = Math.random,
   ) {
-    return parseProgressImport(serialized, questionIds, random);
+    return parseProgressImport(serialized, questionIds, random).state;
   }
 
   function loadStoredState(
@@ -1296,6 +1761,7 @@
       return {
         state: initialState(),
         warning: "本地存储不可用，学习进度仅在当前页面保留。",
+        migrated: false,
       };
     }
 
@@ -1306,6 +1772,7 @@
       return {
         state: initialState(),
         warning: "无法读取本地学习进度，已使用临时进度。",
+        migrated: false,
       };
     }
     if (serialized !== null) {
@@ -1328,6 +1795,37 @@
           : "",
         migrated: false,
       };
+    }
+
+    let previousSerialized = null;
+    try {
+      previousSerialized = storage.getItem(PREVIOUS_STORAGE_KEY);
+    } catch (error) {
+      return {
+        state: initialState(),
+        warning: "无法读取旧版学习进度，已使用临时进度。",
+        migrated: false,
+      };
+    }
+    if (previousSerialized !== null) {
+      try {
+        const migratedState = migrateV2State(
+          JSON.parse(previousSerialized),
+          questionIds,
+        );
+        const saved = saveStoredState(storage, migratedState);
+        return {
+          state: migratedState,
+          warning: saved.ok ? V2_MIGRATION_NOTICE : saved.warning,
+          migrated: true,
+        };
+      } catch (error) {
+        return {
+          state: initialState(),
+          warning: "旧版学习进度无效，已重置。",
+          migrated: false,
+        };
+      }
     }
 
     let legacySerialized;
@@ -1439,9 +1937,31 @@
       "level-text",
       "xp-text",
       "xp-fill",
+      "mascot",
+      "mascot-status",
       "study-streak",
       "daily-count",
+      "daily-goal",
+      "daily-checkin-caption",
+      "daily-progress",
+      "daily-progress-fill",
       "mastery-combo",
+      "study-records-button",
+      "study-records-dialog",
+      "study-records-title",
+      "study-records-close",
+      "tab-calendar",
+      "tab-notebook",
+      "panel-calendar",
+      "panel-notebook",
+      "calendar-prev",
+      "calendar-next",
+      "calendar-month-label",
+      "calendar-grid",
+      "notebook-list",
+      "notebook-empty",
+      "rating-feedback-primary",
+      "rating-feedback-secondary",
       "progress-text",
       "progress-bar",
       "progress-fill",
@@ -1566,6 +2086,9 @@
     let state = loaded.state;
     let answerVisible = false;
     let isTransitioning = false;
+    let visibleCalendarMonth = null;
+    let mascotTimerId = null;
+    let studyRecordsOpen = false;
     let deferredInstallPrompt = null;
     let waitingWorker = null;
     let reloadOnControllerChange = false;
@@ -1606,14 +2129,238 @@
       return saved.ok;
     }
 
-    function getDailyRatingCount(now = new Date()) {
-      const today = localDayKey(now);
-      const activity = state.activityDays.find(
-        (entry) => (
-          localDayKey(new Date(entry.dayStartedAt)) === today
-        ),
+    function getNow() {
+      return new Date();
+    }
+
+    function renderMascot(checkIn, now = getNow()) {
+      const mood = deriveMascotMood(checkIn, now);
+      const mascot = elements.mascot;
+      mascot.className = `mascot mascot-${mood}`;
+      mascot.setAttribute("aria-hidden", "true");
+      elements["mascot-status"].textContent = checkIn.completed
+        ? CHECKIN_SUCCESS_LABEL
+        : MASCOT_MOOD_LABELS[mood];
+    }
+
+    function renderDailyCheckIn(now = getNow()) {
+      const checkIn = deriveDailyCheckIn(state, now);
+      elements["daily-count"].textContent = String(checkIn.displayCount);
+      elements["daily-goal"].textContent = String(checkIn.goal);
+      elements["daily-checkin-caption"].textContent = checkIn.completed
+        ? CHECKIN_SUCCESS_LABEL
+        : "完成自评的不同题";
+      elements["daily-progress"].setAttribute(
+        "aria-valuenow",
+        String(checkIn.displayCount),
       );
-      return activity === undefined ? 0 : activity.ratingCount;
+      elements["daily-progress"].setAttribute(
+        "aria-valuemax",
+        String(checkIn.goal),
+      );
+      elements["daily-progress"].setAttribute(
+        "aria-valuetext",
+        checkIn.completed
+          ? CHECKIN_SUCCESS_LABEL
+          : `${checkIn.displayCount} / ${checkIn.goal}`,
+      );
+      elements["daily-progress-fill"].style.width = (
+        `${(checkIn.displayCount / checkIn.goal) * 100}%`
+      );
+      renderMascot(checkIn, now);
+      return checkIn;
+    }
+
+    function statusLabel(cell) {
+      if (cell.isToday && cell.status === "today") {
+        return `今天 · ${cell.progressText}`;
+      }
+      const labels = {
+        checked: "已打卡",
+        partial: `部分完成 ${cell.progressText}`,
+        unverified: "有训练，未验证",
+        missed: "错过",
+        future: "未来",
+        empty: "无数据",
+        today: `今天 · ${cell.progressText}`,
+      };
+      let label = labels[cell.status] || cell.status;
+      if (cell.isToday && cell.status !== "today") {
+        label = `今天 · ${label}`;
+      }
+      if (cell.clockSkewFuture) {
+        label += " · 设备日期当前早于该记录";
+      }
+      return label;
+    }
+
+    function renderCalendar() {
+      const month = deriveCalendarMonth(state, visibleCalendarMonth, getNow());
+      visibleCalendarMonth = {
+        year: month.year,
+        monthIndex: month.monthIndex,
+      };
+      elements["calendar-month-label"].textContent = month.title;
+      elements["calendar-prev"].disabled = !month.canGoPrevious;
+      elements["calendar-next"].disabled = !month.canGoNext;
+      elements["calendar-prev"].setAttribute(
+        "aria-label",
+        `上个月，${shiftMonth(month.year, month.monthIndex, -1).year} 年 `
+        + `${shiftMonth(month.year, month.monthIndex, -1).monthIndex + 1} 月`,
+      );
+      elements["calendar-next"].setAttribute(
+        "aria-label",
+        `下个月，${shiftMonth(month.year, month.monthIndex, 1).year} 年 `
+        + `${shiftMonth(month.year, month.monthIndex, 1).monthIndex + 1} 月`,
+      );
+
+      const weekdayLabels = ["一", "二", "三", "四", "五", "六", "日"];
+      const nodes = weekdayLabels.map((label) => {
+        const item = documentObject.createElement("div");
+        item.className = "calendar-weekday";
+        item.textContent = label;
+        return item;
+      });
+      for (const cell of month.cells) {
+        const item = documentObject.createElement("div");
+        if (cell.kind === "pad") {
+          item.className = "calendar-cell calendar-pad";
+          item.setAttribute("aria-hidden", "true");
+          nodes.push(item);
+          continue;
+        }
+        item.className = (
+          `calendar-cell calendar-${cell.status}`
+          + (cell.isToday ? " calendar-today" : "")
+        );
+        item.textContent = (
+          `${cell.day}`
+          + (cell.progressText ? ` ${cell.progressText}` : "")
+        );
+        item.setAttribute(
+          "aria-label",
+          `${cell.localDay}，${statusLabel(cell)}`,
+        );
+        if (cell.isToday) {
+          item.setAttribute("aria-current", "date");
+        }
+        nodes.push(item);
+      }
+      if (typeof elements["calendar-grid"].replaceChildren === "function") {
+        elements["calendar-grid"].replaceChildren(...nodes);
+      } else {
+        elements["calendar-grid"].textContent = month.title;
+      }
+    }
+
+    function renderNotebook() {
+      const items = deriveNotebookItems(state, questionsById);
+      const list = elements["notebook-list"];
+      const empty = elements["notebook-empty"];
+      empty.hidden = items.length > 0;
+      list.hidden = items.length === 0;
+      const nodes = items.map((item) => {
+        const row = documentObject.createElement("li");
+        row.className = "notebook-item";
+        const copy = documentObject.createElement("div");
+        copy.className = "notebook-copy";
+        const title = documentObject.createElement("p");
+        title.className = "notebook-question";
+        title.textContent = `第 ${item.questionId} 题 · ${item.question}`;
+        const badge = documentObject.createElement("span");
+        badge.className = `notebook-status notebook-${item.lastRating}`;
+        badge.textContent = item.lastRating === "hard" ? "不会" : "模糊";
+        copy.append(title, badge);
+        const practice = documentObject.createElement("button");
+        practice.className = "utility-button notebook-practice";
+        practice.type = "button";
+        practice.textContent = "去练习";
+        practice.setAttribute(
+          "aria-label",
+          `去练习第 ${item.questionId} 题 ${item.question}`,
+        );
+        practice.addEventListener("click", () => {
+          practiceNotebookItem(item.questionId);
+        });
+        row.append(copy, practice);
+        return row;
+      });
+      if (typeof list.replaceChildren === "function") {
+        list.replaceChildren(...nodes);
+      } else {
+        list.textContent = items.map((item) => item.question).join(" · ");
+      }
+    }
+
+    function setStudyRecordsTab(tabId) {
+      const isCalendar = tabId === "tab-calendar";
+      elements["tab-calendar"].setAttribute("aria-selected", String(isCalendar));
+      elements["tab-notebook"].setAttribute("aria-selected", String(!isCalendar));
+      elements["tab-calendar"].tabIndex = isCalendar ? 0 : -1;
+      elements["tab-notebook"].tabIndex = isCalendar ? -1 : 0;
+      elements["panel-calendar"].hidden = !isCalendar;
+      elements["panel-notebook"].hidden = isCalendar;
+      if (isCalendar) {
+        renderCalendar();
+      } else {
+        renderNotebook();
+      }
+    }
+
+    function practiceNotebookItem(questionId) {
+      let nextState = state;
+      if (!nextState.hardIds.includes(questionId)) {
+        nextState = toggleHardId(nextState, questionId);
+      }
+      const hardIndex = nextState.views.hard.deck.indexOf(questionId);
+      nextState = {
+        ...nextState,
+        mode: "hard",
+        views: {
+          ...nextState.views,
+          hard: {
+            ...nextState.views.hard,
+            index: Math.max(hardIndex, 0),
+          },
+        },
+      };
+      closeDialog(
+        elements["study-records-dialog"],
+        elements["study-records-button"],
+      );
+      commit(nextState, `已进入待复习：第 ${questionId} 题`);
+    }
+
+    function scheduleMascotBoundary() {
+      if (mascotTimerId !== null && typeof browserGlobal.clearTimeout === "function") {
+        browserGlobal.clearTimeout(mascotTimerId);
+        mascotTimerId = null;
+      }
+      if (typeof browserGlobal.setTimeout !== "function") {
+        return;
+      }
+      const now = getNow();
+      const checkIn = deriveDailyCheckIn(state, now);
+      if (checkIn.completed) {
+        return;
+      }
+      const year = now.getFullYear();
+      const month = now.getMonth();
+      const day = now.getDate();
+      const boundaries = [
+        new Date(year, month, day, 15, 0, 0, 0),
+        new Date(year, month, day, 21, 0, 0, 0),
+        new Date(year, month, day + 1, 0, 0, 0, 0),
+      ];
+      const nextBoundary = boundaries.find((boundary) => boundary > now);
+      if (nextBoundary === undefined) {
+        return;
+      }
+      const delay = Math.max(nextBoundary.getTime() - now.getTime(), 0);
+      mascotTimerId = browserGlobal.setTimeout(() => {
+        renderDailyCheckIn(getNow());
+        scheduleMascotBoundary();
+      }, delay);
     }
 
     function setAnswerVisible(visible) {
@@ -1622,7 +2369,8 @@
       elements["rating-panel"].hidden = !answerVisible;
       if (!answerVisible) {
         elements["rating-feedback"].hidden = true;
-        elements["rating-feedback"].textContent = "";
+        elements["rating-feedback-primary"].textContent = "";
+        elements["rating-feedback-secondary"].textContent = "";
       }
       elements["answer-button"].setAttribute(
         "aria-expanded",
@@ -1686,7 +2434,7 @@
       elements["study-streak"].textContent = String(
         state.profile.studyStreakDays,
       );
-      elements["daily-count"].textContent = String(getDailyRatingCount());
+      renderDailyCheckIn();
       elements["mastery-combo"].textContent = (
         `${state.profile.masteryCombo}`
       );
@@ -1862,7 +2610,6 @@
       ) {
         return;
       }
-      const dailyCountBefore = getDailyRatingCount();
       const completedRound = {
         xpEarned: state.round.xpEarned + RATING_CONFIG[rating].xp,
         ratings: {
@@ -1872,12 +2619,13 @@
       };
       hideRoundSummary();
       let result;
+      const ratedAt = getNow();
       try {
         result = applyRating(
           state,
           rating,
           questionIds,
-          new Date(),
+          ratedAt,
         );
       } catch (error) {
         showWarning("无法记录本次自评，请刷新页面后重试。");
@@ -1887,23 +2635,23 @@
       isTransitioning = true;
       disableQuestionControls(true);
       state = result.state;
-      const suffix = result.outcome.leveledUp ? "，等级提升" : "";
-      const ratingLabel = {
-        hard: "不会",
-        fuzzy: "模糊",
-        mastered: "掌握",
-      }[rating];
-      const dailyCompleted = (
-        dailyCountBefore < DAILY_STREAK_RATINGS
-        && getDailyRatingCount() >= DAILY_STREAK_RATINGS
+      const checkIn = renderDailyCheckIn(ratedAt);
+      scheduleMascotBoundary();
+      const announcement = buildRatingAnnouncement(
+        rating,
+        result.outcome,
+        checkIn,
       );
-      const dailySuffix = dailyCompleted ? "，今日训练已完成" : "";
-      const feedback = (
-        `${ratingLabel}：+${result.outcome.xpEarned} XP${suffix}${dailySuffix}`
+      elements["rating-feedback-primary"].textContent = (
+        RATING_PRIMARY_FEEDBACK[rating]
       );
-      elements["rating-feedback"].textContent = feedback;
+      elements["rating-feedback-secondary"].textContent = (
+        RATING_SECONDARY_FEEDBACK[rating]
+        + (result.outcome.leveledUp ? " · 等级提升" : "")
+        + (result.outcome.checkInCompleted ? ` · ${CHECKIN_SUCCESS_LABEL}` : "")
+      );
       elements["rating-feedback"].hidden = false;
-      announce(feedback);
+      announce(announcement);
       const saved = saveStoredState(storage, state);
       if (!saved.ok) {
         showWarning(saved.warning);
@@ -1944,6 +2692,13 @@
       if (trigger !== null) {
         trigger.setAttribute("aria-expanded", "true");
       }
+      if (dialog === elements["study-records-dialog"]) {
+        studyRecordsOpen = true;
+        setStudyRecordsTab("tab-calendar");
+        if (typeof elements["study-records-title"].focus === "function") {
+          elements["study-records-title"].focus();
+        }
+      }
     }
 
     function closeDialog(dialog, trigger = null) {
@@ -1957,7 +2712,22 @@
       }
       if (trigger !== null) {
         trigger.setAttribute("aria-expanded", "false");
+        if (typeof trigger.focus === "function") {
+          trigger.focus();
+        }
       }
+      if (dialog === elements["study-records-dialog"]) {
+        studyRecordsOpen = false;
+      }
+    }
+
+    function isBlockingDialogOpen() {
+      return (
+        studyRecordsOpen
+        || elements["achievements-dialog"].open === true
+        || elements["progress-dialog"].open === true
+        || elements["install-help"].open === true
+      );
     }
 
     function exportFilename(now) {
@@ -2055,15 +2825,19 @@
           await file.text(),
           questionIds,
         );
+        const confirmMessage = imported.migratedFromV2
+          ? (
+            "导入的是旧版进度：连续打卡会按每天 20 道不同题重新计算，"
+            + "训练与 XP 将保留。导入会替换当前学习进度，是否继续？"
+          )
+          : "导入会替换当前学习进度，是否继续？";
         if (
           typeof browserGlobal.confirm !== "function"
-          || !browserGlobal.confirm(
-            "导入会替换当前学习进度，是否继续？",
-          )
+          || !browserGlobal.confirm(confirmMessage)
         ) {
           return;
         }
-        state = imported;
+        state = imported.state;
         answerVisible = false;
         render();
         persist();
@@ -2327,6 +3101,76 @@
     elements["install-help"].addEventListener("close", () => {
       elements["install-button"].setAttribute("aria-expanded", "false");
     });
+    elements["study-records-button"].addEventListener(
+      "click",
+      () => openDialog(
+        elements["study-records-dialog"],
+        elements["study-records-button"],
+      ),
+    );
+    elements["study-records-dialog"].addEventListener("close", () => {
+      studyRecordsOpen = false;
+      elements["study-records-button"].setAttribute("aria-expanded", "false");
+    });
+    elements["study-records-close"].addEventListener(
+      "click",
+      () => closeDialog(
+        elements["study-records-dialog"],
+        elements["study-records-button"],
+      ),
+    );
+    elements["tab-calendar"].addEventListener(
+      "click",
+      () => setStudyRecordsTab("tab-calendar"),
+    );
+    elements["tab-notebook"].addEventListener(
+      "click",
+      () => setStudyRecordsTab("tab-notebook"),
+    );
+    elements["tab-calendar"].addEventListener("keydown", (event) => {
+      if (event.key === "ArrowRight" || event.key === "End") {
+        event.preventDefault();
+        setStudyRecordsTab("tab-notebook");
+        elements["tab-notebook"].focus();
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        setStudyRecordsTab("tab-calendar");
+        elements["tab-calendar"].focus();
+      }
+    });
+    elements["tab-notebook"].addEventListener("keydown", (event) => {
+      if (event.key === "ArrowLeft" || event.key === "Home") {
+        event.preventDefault();
+        setStudyRecordsTab("tab-calendar");
+        elements["tab-calendar"].focus();
+      } else if (event.key === "End") {
+        event.preventDefault();
+        setStudyRecordsTab("tab-notebook");
+        elements["tab-notebook"].focus();
+      }
+    });
+    elements["calendar-prev"].addEventListener("click", () => {
+      if (visibleCalendarMonth === null) {
+        return;
+      }
+      visibleCalendarMonth = shiftMonth(
+        visibleCalendarMonth.year,
+        visibleCalendarMonth.monthIndex,
+        -1,
+      );
+      renderCalendar();
+    });
+    elements["calendar-next"].addEventListener("click", () => {
+      if (visibleCalendarMonth === null) {
+        return;
+      }
+      visibleCalendarMonth = shiftMonth(
+        visibleCalendarMonth.year,
+        visibleCalendarMonth.monthIndex,
+        1,
+      );
+      renderCalendar();
+    });
     elements["progress-dialog-close"].addEventListener(
       "click",
       () => closeDialog(elements["progress-dialog"], progressButton),
@@ -2357,6 +3201,7 @@
         || event.metaKey
         || event.shiftKey
         || isInteractiveTarget(event.target)
+        || isBlockingDialogOpen()
       ) {
         return;
       }
@@ -2397,6 +3242,19 @@
     setupInstallation();
     setupServiceWorker();
     render();
+    scheduleMascotBoundary();
+    if (typeof browserGlobal.addEventListener === "function") {
+      browserGlobal.addEventListener("focus", () => {
+        renderDailyCheckIn(getNow());
+        scheduleMascotBoundary();
+      });
+      browserGlobal.addEventListener("visibilitychange", () => {
+        if (documentObject.visibilityState === "visible") {
+          renderDailyCheckIn(getNow());
+          scheduleMascotBoundary();
+        }
+      });
+    }
     return Object.freeze({
       getState() {
         return state;
@@ -2406,24 +3264,38 @@
   }
 
   const api = Object.freeze({
+    CHECKIN_SUCCESS_LABEL,
+    DAILY_CHECKIN_UNIQUE_QUESTIONS,
     LEGACY_STORAGE_KEY,
+    MASCOT_MOOD_LABELS,
     MAX_ACTIVITY_DAYS,
     MAX_HISTORY_LENGTH,
     MAX_IMPORT_BYTES,
+    PREVIOUS_STORAGE_KEY,
     RATING_CONFIG,
+    RATING_PRIMARY_FEEDBACK,
+    RATING_SECONDARY_FEEDBACK,
     STATE_VERSION,
     STORAGE_KEY,
+    V2_MIGRATION_NOTICE,
     applyRating,
+    buildRatingAnnouncement,
     canRegisterServiceWorker,
     createExportPayload,
     createInitialState,
     createProgressExport,
     deriveAchievements,
+    deriveCalendarMonth,
+    deriveDailyCheckIn,
     deriveLevel,
+    deriveMascotMood,
+    deriveNotebookItems,
     getActiveDeck,
     getCurrentQuestionId,
     loadStoredState,
+    localDayKey,
     migrateLegacyState,
+    migrateV2State,
     navigateIndex,
     navigateState,
     normalizeQuestions,
@@ -2433,6 +3305,7 @@
     saveStoredState,
     shuffle,
     toggleHardId,
+    updateActivityDay,
   });
 
   if (typeof module !== "undefined" && module.exports) {

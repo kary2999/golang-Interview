@@ -1,7 +1,7 @@
 // [skill: go-team-standards · dev-dna] 提供同源 PWA 应用壳缓存与显式更新
 "use strict";
 
-const CACHE_NAME = "go-interview-v3";
+const CACHE_NAME = "go-interview-v4";
 const APP_SHELL = Object.freeze([
   "./",
   "./index.html",

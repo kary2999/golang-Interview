@@ -25,9 +25,22 @@
   <main id="app" class="app-shell">
     <header class="app-header">
       <div class="brand-lockup">
-        <span class="brand-mark" aria-hidden="true">GO</span>
+        <div class="companion-brand">
+          <span
+            id="mascot"
+            class="mascot mascot-normal"
+            aria-hidden="true"
+          >
+            <span class="mascot-face">
+              <span class="eye left"></span>
+              <span class="eye right"></span>
+              <span class="mouth"></span>
+            </span>
+          </span>
+          <p id="mascot-status" class="mascot-status">普通</p>
+        </div>
         <div>
-          <p class="brand-kicker">DAILY SPRINT</p>
+          <p class="brand-kicker">SPRINT COMPANION</p>
           <h1>Go 面试冲刺营</h1>
         </div>
       </div>
@@ -66,13 +79,14 @@
           成就
         </button>
         <button
-          class="mode-button mode-button-soon"
+          id="study-records-button"
+          class="mode-button"
           type="button"
-          aria-disabled="true"
-          title="题目分类将在后续版本上线"
-          disabled
+          aria-haspopup="dialog"
+          aria-controls="study-records-dialog"
+          aria-expanded="false"
         >
-          分类即将上线
+          学习记录
         </button>
       </nav>
 
@@ -129,12 +143,31 @@
         </div>
       </div>
 
-      <div class="stat-item">
+      <div class="stat-item daily-checkin-stat">
         <span class="stat-icon" aria-hidden="true">●</span>
-        <p>
-          <span class="stat-label">今日训练</span>
-          <strong><span id="daily-count">0</span> 题</strong>
-        </p>
+        <div class="daily-checkin-copy">
+          <span class="stat-label">今日打卡</span>
+          <strong>
+            <span id="daily-count">0</span>
+            /
+            <span id="daily-goal">20</span>
+          </strong>
+          <p id="daily-checkin-caption" class="daily-checkin-caption">
+            完成自评的不同题
+          </p>
+          <div
+            id="daily-progress"
+            class="daily-progress"
+            role="progressbar"
+            aria-label="今日打卡进度"
+            aria-valuemin="0"
+            aria-valuemax="20"
+            aria-valuenow="0"
+            aria-valuetext="0 / 20"
+          >
+            <span id="daily-progress-fill" class="daily-progress-fill"></span>
+          </div>
+        </div>
       </div>
 
       <div class="stat-item">
@@ -282,14 +315,13 @@
             <small>+20 XP · 移出待复习</small>
           </button>
         </div>
-        <p
-          id="rating-feedback"
-          class="rating-feedback"
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-          hidden
-        ></p>
+        <p id="rating-feedback" class="rating-feedback" hidden>
+          <span id="rating-feedback-primary" class="rating-feedback-primary"></span>
+          <small
+            id="rating-feedback-secondary"
+            class="rating-feedback-secondary"
+          ></small>
+        </p>
       </section>
 
       <footer class="card-actions" aria-label="题目导航与作答">
@@ -436,7 +468,7 @@
           type="button"
         >
           导出或分享进度
-          <small>生成不含题目正文的 v2 JSON</small>
+          <small>生成不含题目正文的 v3 JSON</small>
         </button>
         <label class="data-action data-action-import" for="import-input">
           导入进度文件
@@ -460,6 +492,109 @@
       <p class="dialog-note">
         导入会在完整校验和你确认后整体替换本机进度，不会自动合并，也不会上传到云端。
       </p>
+    </dialog>
+
+    <dialog
+      id="study-records-dialog"
+      class="app-dialog study-records-dialog"
+      aria-labelledby="study-records-title"
+    >
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow">复盘</p>
+          <h2 id="study-records-title">学习记录</h2>
+        </div>
+        <form method="dialog">
+          <button
+            id="study-records-close"
+            class="dialog-close"
+            type="submit"
+            aria-label="关闭学习记录"
+          >
+            ×
+          </button>
+        </form>
+      </div>
+      <div
+        class="study-record-tabs"
+        role="tablist"
+        aria-label="学习记录面板"
+      >
+        <button
+          id="tab-calendar"
+          class="study-record-tab"
+          type="button"
+          role="tab"
+          aria-selected="true"
+          aria-controls="panel-calendar"
+          tabindex="0"
+        >
+          打卡日历
+        </button>
+        <button
+          id="tab-notebook"
+          class="study-record-tab"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          aria-controls="panel-notebook"
+          tabindex="-1"
+        >
+          错题本
+        </button>
+      </div>
+      <section
+        id="panel-calendar"
+        class="study-record-panel"
+        role="tabpanel"
+        aria-labelledby="tab-calendar"
+      >
+        <div class="calendar-toolbar">
+          <button
+            id="calendar-prev"
+            class="utility-button"
+            type="button"
+            aria-label="上个月"
+          >
+            上个月
+          </button>
+          <h3
+            id="calendar-month-label"
+            class="calendar-month-label"
+            aria-live="polite"
+          >
+            打卡月历
+          </h3>
+          <button
+            id="calendar-next"
+            class="utility-button"
+            type="button"
+            aria-label="下个月"
+          >
+            下个月
+          </button>
+        </div>
+        <div id="calendar-grid" class="calendar-grid" aria-label="打卡状态日历">
+        </div>
+        <div class="calendar-key" aria-hidden="true">
+          <span class="key-checked">已打卡</span>
+          <span class="key-partial">部分</span>
+          <span class="key-missed">错过</span>
+          <span class="key-future">未来</span>
+        </div>
+      </section>
+      <section
+        id="panel-notebook"
+        class="study-record-panel"
+        role="tabpanel"
+        aria-labelledby="tab-notebook"
+        hidden
+      >
+        <ul id="notebook-list" class="notebook-list"></ul>
+        <p id="notebook-empty" class="notebook-empty">
+          错题本是空的，继续保持
+        </p>
+      </section>
     </dialog>
   </main>
 
