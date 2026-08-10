@@ -15,10 +15,16 @@ class ExtractQuestionsTest(unittest.TestCase):
         self.questions = extract_questions(source.read_text(encoding="utf-8"))
 
     @staticmethod
-    def question(answer_html, question="Q", question_id=1):
+    def question(
+        answer_html,
+        question="Q",
+        question_id=1,
+        prompt_html="",
+    ):
         return {
             "id": question_id,
             "question": question,
+            "promptHtml": prompt_html,
             "answerHtml": answer_html,
         }
 
@@ -61,6 +67,47 @@ class ExtractQuestionsTest(unittest.TestCase):
         self.assertIn("<code>invalid class text</code>", answer)
         self.assertNotIn("Language-Go", answer)
         self.assertNotIn("data-x", answer)
+
+    def test_separates_leading_code_prompt_from_marked_answer(self):
+        source = """
+        <div class="RichText ztext Post-RichText">
+          <h3>35 下面这句代码是什么作用？</h3>
+          <div class="highlight">
+            <pre><code class="language-text">var _ Codec = (*GobCodec)(nil)</code></pre>
+          </div>
+          <p>答：用于在编译期检查接口实现。</p>
+          <h2>文章结束</h2>
+        </div>
+        """
+
+        questions = extract_questions(source)
+
+        self.assertEqual(
+            questions[0]["promptHtml"],
+            (
+                '<pre><code class="language-text">'
+                "var _ Codec = (*GobCodec)(nil)"
+                "</code></pre>"
+            ),
+        )
+        self.assertEqual(
+            questions[0]["answerHtml"],
+            "<p>答：用于在编译期检查接口实现。</p>",
+        )
+
+    def test_keeps_leading_code_as_answer_without_an_answer_marker(self):
+        source = """
+        <div class="RichText ztext Post-RichText">
+          <h3>08 如何判断 map 中是否包含一个 key？</h3>
+          <pre><code class="language-text">_, ok := values[key]</code></pre>
+          <h2>文章结束</h2>
+        </div>
+        """
+
+        questions = extract_questions(source)
+
+        self.assertEqual(questions[0]["promptHtml"], "")
+        self.assertIn("_, ok := values[key]", questions[0]["answerHtml"])
 
     def test_validates_expected_ids(self):
         validate_questions(self.questions, expected_ids=[1, 2])
@@ -109,6 +156,15 @@ class ExtractQuestionsTest(unittest.TestCase):
                         [self.question(answer_html)],
                         expected_ids=[1],
                     )
+
+        with self.assertRaises(ValueError):
+            validate_questions(
+                [self.question(
+                    "<p>A</p>",
+                    prompt_html="<script>alert(1)</script>",
+                )],
+                expected_ids=[1],
+            )
 
     def test_validation_rejects_duplicate_and_empty_records(self):
         invalid_questions = {

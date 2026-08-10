@@ -29,11 +29,20 @@ def archive_html():
             question = "如何优化内存使用？"
         elif question_id == 90:
             question = "如何优化垃圾回收？"
+        elif question_id == 35:
+            question = "下面这句代码是什么作用？"
         else:
             question = "原文问题 {}？".format(question_id)
 
         parts.append("<h3>{:02d} {}</h3>".format(question_id, question))
-        if question_id not in {89, 90}:
+        if question_id == 35:
+            parts.append(
+                '<pre><code class="language-text">'
+                "var _ Codec = (*GobCodec)(nil)"
+                "</code></pre>"
+                "<p>答：用于在编译期检查接口实现。</p>"
+            )
+        elif question_id not in {89, 90}:
             parts.append("<p>原文答案 {}</p>".format(question_id))
     parts.extend(["<h2>文章结束</h2>", "</div>"])
     return "".join(parts)
@@ -75,6 +84,22 @@ class BuildQuestionsTest(unittest.TestCase):
             )
             with self.subTest(question_id=item["id"]):
                 self.assertEqual(item["source"], expected)
+
+    def test_preserves_question_prompt_separately_from_the_answer(self):
+        record = self.by_id[35]
+
+        self.assertEqual(
+            record["promptHtml"],
+            (
+                '<pre><code class="language-text">'
+                "var _ Codec = (*GobCodec)(nil)"
+                "</code></pre>"
+            ),
+        )
+        self.assertEqual(
+            record["answerHtml"],
+            "<p>答：用于在编译期检查接口实现。</p>",
+        )
 
     def test_supplements_73_with_receiver_and_method_set_guidance(self):
         record = self.by_id[73]

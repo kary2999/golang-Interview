@@ -57,29 +57,29 @@
     return shuffled;
   }
 
-  function answerHasVisibleText(answerHtml) {
-    return answerHtml
+  function htmlHasVisibleText(contentHtml) {
+    return contentHtml
       .replace(/<[^>]*>/g, "")
       .replace(/&(?:nbsp|#160|#x0*a0);/gi, "")
       .trim().length > 0;
   }
 
-  function assertSafeAnswerHtml(answerHtml) {
+  function assertSafeContentHtml(contentHtml, fieldName) {
     const tagPattern = /<[^>]*>/g;
     const stack = [];
     let cursor = 0;
-    let match = tagPattern.exec(answerHtml);
+    let match = tagPattern.exec(contentHtml);
 
     while (match !== null) {
-      const textBeforeTag = answerHtml.slice(cursor, match.index);
+      const textBeforeTag = contentHtml.slice(cursor, match.index);
       if (textBeforeTag.includes("<") || textBeforeTag.includes(">")) {
-        throw new TypeError("answerHtml contains malformed markup");
+        throw new TypeError(`${fieldName} contains malformed markup`);
       }
 
       const token = match[0];
       if (token === "<br>") {
         cursor = tagPattern.lastIndex;
-        match = tagPattern.exec(answerHtml);
+        match = tagPattern.exec(contentHtml);
         continue;
       }
 
@@ -87,10 +87,10 @@
       if (closing !== null) {
         const tag = closing[1];
         if (stack.pop() !== tag) {
-          throw new TypeError("answerHtml contains mismatched tags");
+          throw new TypeError(`${fieldName} contains mismatched tags`);
         }
         cursor = tagPattern.lastIndex;
-        match = tagPattern.exec(answerHtml);
+        match = tagPattern.exec(contentHtml);
         continue;
       }
 
@@ -98,23 +98,27 @@
         /^<([a-z]+)(?: class="(language-[a-z0-9_-]+)")?>$/,
       );
       if (opening === null || !ALLOWED_ANSWER_TAGS.has(opening[1])) {
-        throw new TypeError("answerHtml contains a disallowed tag or attribute");
+        throw new TypeError(
+          `${fieldName} contains a disallowed tag or attribute`,
+        );
       }
       if (opening[2] !== undefined && opening[1] !== "code") {
-        throw new TypeError("only code elements may have a language class");
+        throw new TypeError(
+          `${fieldName}: only code elements may have a language class`,
+        );
       }
       stack.push(opening[1]);
       cursor = tagPattern.lastIndex;
-      match = tagPattern.exec(answerHtml);
+      match = tagPattern.exec(contentHtml);
     }
 
-    const trailingText = answerHtml.slice(cursor);
+    const trailingText = contentHtml.slice(cursor);
     if (
       trailingText.includes("<")
       || trailingText.includes(">")
       || stack.length !== 0
     ) {
-      throw new TypeError("answerHtml contains malformed markup");
+      throw new TypeError(`${fieldName} contains malformed markup`);
     }
   }
 
@@ -130,6 +134,9 @@
       }
 
       const { id, question, answerHtml, source } = item;
+      const promptHtml = item.promptHtml === undefined
+        ? ""
+        : item.promptHtml;
       if (
         !Number.isInteger(id)
         || typeof id === "boolean"
@@ -142,9 +149,15 @@
         throw new TypeError(`question ${id} has no question text`);
       }
       if (
+        typeof promptHtml !== "string"
+        || (promptHtml.trim() !== "" && !htmlHasVisibleText(promptHtml))
+      ) {
+        throw new TypeError(`question ${id} has invalid prompt content`);
+      }
+      if (
         typeof answerHtml !== "string"
         || answerHtml.trim() === ""
-        || !answerHasVisibleText(answerHtml)
+        || !htmlHasVisibleText(answerHtml)
       ) {
         throw new TypeError(`question ${id} has no answer`);
       }
@@ -152,11 +165,13 @@
         throw new TypeError(`question ${id} has an invalid source`);
       }
 
-      assertSafeAnswerHtml(answerHtml);
+      assertSafeContentHtml(promptHtml, "promptHtml");
+      assertSafeContentHtml(answerHtml, "answerHtml");
       seenIds.add(id);
       return {
         id,
         question: question.trim(),
+        promptHtml,
         answerHtml,
         source,
       };
@@ -1434,6 +1449,7 @@
       "question-number",
       "source-badge",
       "question-text",
+      "prompt-content",
       "answer-panel",
       "answer-content",
       "rating-panel",
@@ -1751,6 +1767,8 @@
 
       elements["question-number"].textContent = `第 ${question.id} 题`;
       elements["question-text"].textContent = question.question;
+      elements["prompt-content"].innerHTML = question.promptHtml;
+      elements["prompt-content"].hidden = question.promptHtml === "";
       elements["answer-content"].innerHTML = question.answerHtml;
       elements["source-badge"].hidden = question.source !== "supplemented";
 

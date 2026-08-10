@@ -136,10 +136,12 @@ def build_questions(source_html: str) -> list[dict]:
     for question_id in _ALL_IDS:
         if question_id == 73:
             question = _QUESTION_73
+            prompt_html = ""
             answer_html = _ANSWER_73
         else:
             archive_record = archive_by_id[question_id]
             question = archive_record["question"]
+            prompt_html = archive_record["promptHtml"]
             if question_id == 89:
                 answer_html = _ANSWER_89
             elif question_id == 90:
@@ -151,6 +153,7 @@ def build_questions(source_html: str) -> list[dict]:
             {
                 "id": question_id,
                 "question": question,
+                "promptHtml": prompt_html,
                 "answerHtml": answer_html,
                 "source": (
                     "supplemented"
@@ -171,6 +174,11 @@ def render_questions_js(questions: list[dict]) -> str:
         {
             "id": item["id"],
             "question": item["question"],
+            **(
+                {"promptHtml": item["promptHtml"]}
+                if item.get("promptHtml")
+                else {}
+            ),
             "answerHtml": item["answerHtml"],
             "source": item["source"],
         }

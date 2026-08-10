@@ -11,9 +11,9 @@
 
 ## 提取与清理规则
 
-`scripts/extract_questions.py` 只处理文章正文 `Post-RichText` 区域中以数字开头的 `h3` 标题。数字标题作为问题，标题之后到下一数字标题之间的正文作为答案；非数字 `h3` 的内容并入前一道题，遇到正文后的 `h2` 时停止。
+`scripts/extract_questions.py` 只处理文章正文 `Post-RichText` 区域中以数字开头的 `h3` 标题。数字标题作为问题；如果标题后先出现代码块、随后以“答：”或“答案，”明确开始答案，代码块会写入可选的 `promptHtml` 并在揭晓前显示，其余正文写入 `answerHtml`。其他情况下，标题之后到下一数字标题之间的正文仍作为答案；非数字 `h3` 的内容并入前一道题，遇到正文后的 `h2` 时停止。
 
-提取器只保留 `p`、`ul`、`ol`、`li`、`pre`、`code`、`strong`、`b`、`em`、`i`、`blockquote` 和 `br`。除格式合法的 `code` 语言类名外，所有属性都会移除；链接只保留可见文字。脚本、样式、SVG、表单及其子内容不会进入题库。
+`promptHtml` 与 `answerHtml` 只保留 `p`、`ul`、`ol`、`li`、`pre`、`code`、`strong`、`b`、`em`、`i`、`blockquote` 和 `br`。除格式合法的 `code` 语言类名外，所有属性都会移除；链接只保留可见文字。脚本、样式、SVG、表单及其子内容不会进入题库。
 
 合并完成后，全部 100 条记录再次通过 `validate_questions` 的严格边界检查，验证题号、非空内容、允许标签、属性和标签嵌套。浏览器数据写入 `data/questions.js`，不包含远程资源引用或可执行 HTML。
 

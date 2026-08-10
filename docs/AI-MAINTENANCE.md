@@ -15,9 +15,10 @@
 `data/questions.js` 是确定性生成文件，不直接编辑：
 
 1. `scripts/extract_questions.py` 从本地 HTML 提取正文并清理标签。
-2. `scripts/build_questions.py` 检查源文章结构，补齐 ID 73、89、90。
-3. 构建脚本验证 100 条记录后写入 `data/questions.js`。
-4. `scripts/verify_project.py` 再次检查顺序、来源、安全 HTML 和加载边界。
+2. 标题后的前置代码若由“答：”或“答案，”与答案明确分隔，则写入可选的 `promptHtml`，保证题目上下文在揭晓前可见。
+3. `scripts/build_questions.py` 检查源文章结构，补齐 ID 73、89、90。
+4. 构建脚本验证 100 条记录后写入 `data/questions.js`。
+5. `scripts/verify_project.py` 再次检查顺序、来源、安全 HTML 和加载边界。
 
 重新生成示例：
 

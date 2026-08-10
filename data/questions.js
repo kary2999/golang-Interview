@@ -197,7 +197,8 @@ window.GO_INTERVIEW_QUESTIONS = Object.freeze(
   {
     "id": 33,
     "question": "uint型变量值分别为 1，2，它们相减的结果是多少？",
-    "answerHtml": "<pre><code class=\"language-text\">var a uint = 1\nvar b uint = 2\nfmt.Println(a - b)\n</code></pre><p>答案，结果会溢出，如果是32位系统，结果是2^32-1，如果是64位系统，结果2^64-1.</p>",
+    "promptHtml": "<pre><code class=\"language-text\">var a uint = 1\nvar b uint = 2\nfmt.Println(a - b)\n</code></pre>",
+    "answerHtml": "<p>答案，结果会溢出，如果是32位系统，结果是2^32-1，如果是64位系统，结果2^64-1.</p>",
     "source": "zhihu-archive"
   },
   {
@@ -209,7 +210,8 @@ window.GO_INTERVIEW_QUESTIONS = Object.freeze(
   {
     "id": 35,
     "question": "下面这句代码是什么作用，为什么要定义一个空值？",
-    "answerHtml": "<pre><code class=\"language-text\">type GobCodec struct{\n        conn io.ReadWriteCloser\n        buf *bufio.Writer\n        dec *gob.Decoder\n        enc *gob.Encoder\n}\n\ntype Codec interface {\n        io.Closer\n        ReadHeader(*Header) error\n        ReadBody(interface{})  error\n        Write(*Header, interface{}) error\n}\n\nvar _ Codec = (*GobCodec)(nil)\n</code></pre><p>答：将nil转换为<i>GobCodec类型，然后再转换为Codec接口，如果转换失败，说明</i>GobCodec没有实现Codec接口的所有方法。</p>",
+    "promptHtml": "<pre><code class=\"language-text\">type GobCodec struct{\n        conn io.ReadWriteCloser\n        buf *bufio.Writer\n        dec *gob.Decoder\n        enc *gob.Encoder\n}\n\ntype Codec interface {\n        io.Closer\n        ReadHeader(*Header) error\n        ReadBody(interface{})  error\n        Write(*Header, interface{}) error\n}\n\nvar _ Codec = (*GobCodec)(nil)\n</code></pre>",
+    "answerHtml": "<p>答：将nil转换为<i>GobCodec类型，然后再转换为Codec接口，如果转换失败，说明</i>GobCodec没有实现Codec接口的所有方法。</p>",
     "source": "zhihu-archive"
   },
   {

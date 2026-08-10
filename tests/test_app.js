@@ -74,18 +74,21 @@ function makeQuestions() {
     {
       id: 1,
       question: "问题 1",
+      promptHtml: "",
       answerHtml: "<p>答案 1</p>",
       source: "zhihu-archive",
     },
     {
       id: 2,
       question: "问题 2",
+      promptHtml: "",
       answerHtml: "<pre><code class=\"language-go\">func main() {}</code></pre>",
       source: "zhihu-archive",
     },
     {
       id: 3,
       question: "问题 3",
+      promptHtml: "",
       answerHtml: "<p><strong>答案 3</strong></p>",
       source: "supplemented",
     },
@@ -225,6 +228,7 @@ function makeFakeDocument() {
     "question-number",
     "source-badge",
     "question-text",
+    "prompt-content",
     "answer-panel",
     "answer-content",
     "rating-panel",
@@ -1183,6 +1187,38 @@ test("removing the last hard question resets and hides review controls", () => {
   assert.equal(hardButton.getAttribute("aria-pressed"), "false");
 });
 
+test("browser shows question code before the answer is revealed", () => {
+  const documentObject = makeFakeDocument();
+  const question = {
+    ...makeQuestions()[0],
+    promptHtml: (
+      '<pre><code class="language-go">'
+      + "var _ Codec = (*GobCodec)(nil)"
+      + "</code></pre>"
+    ),
+  };
+  const initial = createInitialState([question.id], () => 0);
+  const browserGlobal = makeBrowserGlobal({
+    questions: [question],
+    reducedMotion: true,
+    storage: makeStorage({
+      [STORAGE_KEY]: JSON.stringify(initial),
+    }),
+  });
+
+  startBrowserApp(documentObject, browserGlobal);
+
+  assert.equal(
+    documentObject.elements.get("prompt-content").innerHTML,
+    question.promptHtml,
+  );
+  assert.equal(documentObject.elements.get("answer-panel").hidden, true);
+  assert.equal(
+    documentObject.elements.get("answer-content").innerHTML,
+    question.answerHtml,
+  );
+});
+
 test("browser reveal exposes ratings and a rating awards XP after 300 ms", () => {
   const documentObject = makeFakeDocument();
   const initial = createInitialState([1, 2, 3], () => 0);
@@ -1884,6 +1920,12 @@ test("question validation accepts safe records and rejects malformed input", asy
     "duplicate ID": [valid[0], { ...valid[1], id: 1 }],
     "boolean ID": [{ ...valid[0], id: true }],
     "empty question": [{ ...valid[0], question: " " }],
+    "empty prompt markup": [
+      { ...valid[0], promptHtml: "<p><br></p>" },
+    ],
+    "unsafe prompt tag": [
+      { ...valid[0], promptHtml: "<script>alert(1)</script>" },
+    ],
     "empty answer": [{ ...valid[0], answerHtml: "<p><br></p>" }],
     "unknown source": [{ ...valid[0], source: "unknown" }],
     "unsafe answer tag": [{ ...valid[0], answerHtml: "<script>alert(1)</script>" }],

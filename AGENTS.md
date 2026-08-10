@@ -31,13 +31,15 @@
 {
   id: 1,
   question: "= 和 := 的区别？",
+  promptHtml: "<pre><code>...</code></pre>", // 可选，揭晓前显示
   answerHtml: "<p>...</p>",
   source: "zhihu-archive"
 }
 ```
 
 - 记录必须按 ID `1..100` 排列，ID 唯一，问题和答案均不得为空。
-- `answerHtml` 只能使用提取器允许的安全标签；禁止脚本、事件属性、远程资源和任意样式。
+- `promptHtml` 是可选的题目补充内容，用于原文中标题后的代码或示例，必须在答案揭晓前显示。
+- `promptHtml` 与 `answerHtml` 只能使用提取器允许的安全标签；禁止脚本、事件属性、远程资源和任意样式。
 - 来源只能是 `zhihu-archive` 或 `supplemented`。
 - 只有 ID 73、89、90 是 `supplemented`，不得描述成源文章原文。
 - 其余 97 条为存档提取内容，未做全面事实校订，不要静默重写。

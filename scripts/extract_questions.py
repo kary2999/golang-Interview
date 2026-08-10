@@ -17,6 +17,11 @@ _EMPTY_BLOCK_RE = re.compile(
     r"(?:\s|<br>)*"
     r"</(?P=tag)>"
 )
+_LEADING_CODE_BLOCKS_RE = re.compile(
+    r"\A(?P<prompt>(?:<pre>.*?</pre>\s*)+)",
+    re.DOTALL,
+)
+_ANSWER_MARKER_RE = re.compile(r"\A<p>\s*答(?:案)?[：:,，]")
 
 _ALLOWED_TAGS = {
     "p",
@@ -67,6 +72,19 @@ def _normalize_answer(parts):
             break
         answer = normalized
     return answer
+
+
+def _split_prompt_and_answer(parts):
+    content = _normalize_answer(parts)
+    code_match = _LEADING_CODE_BLOCKS_RE.match(content)
+    if code_match is None:
+        return "", content
+
+    answer = content[code_match.end():].strip()
+    if _ANSWER_MARKER_RE.match(answer) is None:
+        return "", content
+
+    return code_match.group("prompt").strip(), answer
 
 
 class _ArticleParser(HTMLParser):
@@ -201,11 +219,15 @@ class _ArticleParser(HTMLParser):
     def _finish_current(self):
         if self._current_id is None:
             return
+        prompt_html, answer_html = _split_prompt_and_answer(
+            self._answer_parts
+        )
         self.questions.append(
             {
                 "id": self._current_id,
                 "question": self._current_question,
-                "answerHtml": _normalize_answer(self._answer_parts),
+                "promptHtml": prompt_html,
+                "answerHtml": answer_html,
             }
         )
         self._current_id = None
@@ -292,7 +314,7 @@ def _has_visible_text(fragment):
 
 
 def extract_questions(source_html: str) -> list[dict]:
-    """Return [{"id": int, "question": str, "answerHtml": str}, ...]."""
+    """Return sanitized question, optional prompt, and answer records."""
     parser = _ArticleParser()
     parser.feed(source_html)
     parser.close()
@@ -346,9 +368,15 @@ def validate_questions(
     for item in questions:
         question_id = item["id"]
         question = item.get("question")
+        prompt = item.get("promptHtml", "")
         answer = item.get("answerHtml")
         if not isinstance(question, str) or not question.strip():
             raise ValueError("题号 {} 的问题为空".format(question_id))
+        if (
+            not isinstance(prompt, str)
+            or (prompt.strip() and not _has_visible_text(prompt))
+        ):
+            raise ValueError("题号 {} 的题目补充内容无效".format(question_id))
         if (
             not isinstance(answer, str)
             or not answer.strip()
@@ -358,6 +386,7 @@ def validate_questions(
 
         try:
             _validate_safe_markup(question)
+            _validate_safe_markup(prompt)
             _validate_safe_markup(answer)
         except ValueError as error:
             raise ValueError(
