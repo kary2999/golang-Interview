@@ -2262,6 +2262,19 @@ test("rating announcement keeps encouragement primary", () => {
   assert.equal(RATING_SECONDARY_FEEDBACK.fuzzy, "+8 XP · 已加入待复习");
 });
 
+test("rating buttons never promise a reappearance schedule", () => {
+  const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+  const controls = html.match(
+    /<div class="rating-controls">[\s\S]*?<\/div>/,
+  );
+
+  assert.ok(controls);
+  assert.doesNotMatch(controls[0], /题后再练/);
+  assert.match(controls[0], /\+2 XP · 加入待复习/);
+  assert.match(controls[0], /\+8 XP · 加入待复习/);
+  assert.match(controls[0], /\+20 XP · 移出待复习/);
+});
+
 test("notebook derives hard and fuzzy items and drops mastered", () => {
   const state = createInitialState([1, 2, 3], () => 0);
   state.questionStats = {
