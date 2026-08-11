@@ -730,17 +730,17 @@ test("a hard question stays out of the stream after later ratings", () => {
   assert.deepEqual(state.hardIds, [hardQuestionId]);
 });
 
-test("deriveLevel uses fixed 20 XP levels", () => {
-  assert.equal(XP_PER_LEVEL, 20);
+test("deriveLevel uses fixed 100 XP levels", () => {
+  assert.equal(XP_PER_LEVEL, 100);
   assert.deepEqual(deriveLevel(0), {
     level: 1,
     currentXp: 0,
-    requiredXp: 20,
+    requiredXp: 100,
   });
-  assert.deepEqual(deriveLevel(50), {
+  assert.deepEqual(deriveLevel(250), {
     level: 3,
-    currentXp: 10,
-    requiredXp: 20,
+    currentXp: 50,
+    requiredXp: 100,
   });
   assert.throws(() => deriveLevel(-1), TypeError);
 });
@@ -1495,15 +1495,15 @@ test("reduced motion advances immediately and renders sprint profile", () => {
   assert.equal(persisted.profile.totalXp, 20);
   assert.match(
     documentObject.elements.get("level-text").textContent,
-    /2/,
+    /1/,
   );
   assert.match(
     documentObject.elements.get("xp-text").textContent,
-    /0\s*\/\s*20/,
+    /20\s*\/\s*100/,
   );
   assert.equal(
     documentObject.elements.get("xp-fill").style.width,
-    "0%",
+    "20%",
   );
   assert.match(
     documentObject.elements.get("mastery-combo").textContent,
@@ -1903,7 +1903,7 @@ test("browser import confirms valid replacement and rejects invalid input", asyn
   assert.equal(JSON.parse(storage.writes.at(-1)[1]).profile.totalXp, 20);
   assert.match(
     documentObject.elements.get("xp-text").textContent,
-    /0\s*\/\s*20/,
+    /20\s*\/\s*100/,
   );
 
   const writesBeforeInvalid = storage.writes.length;
@@ -2567,12 +2567,16 @@ test("celebration dialog is declared in the page shell", () => {
 });
 
 test("leveling up plays a self-dismissing effect", () => {
+  const ids = Array.from({ length: 30 }, (_, index) => index + 1);
   const documentObject = makeFakeDocument();
-  const initial = createInitialState([1, 2, 3], () => 0);
   const storage = makeStorage({
-    [STORAGE_KEY]: JSON.stringify(initial),
+    [STORAGE_KEY]: JSON.stringify(makeCheckInState(4, 30, ids)),
   });
-  const browserGlobal = makeBrowserGlobal({ reducedMotion: true, storage });
+  const browserGlobal = makeBrowserGlobal({
+    questions: makeManyQuestions(30),
+    reducedMotion: true,
+    storage,
+  });
   startBrowserApp(documentObject, browserGlobal);
   const effect = documentObject.elements.get("level-up-effect");
 
@@ -2580,6 +2584,7 @@ test("leveling up plays a self-dismissing effect", () => {
   documentObject.elements.get("answer-button").click();
   documentObject.elements.get("rate-mastered").click();
 
+  assert.equal(JSON.parse(storage.writes.at(-1)[1]).profile.totalXp, 100);
   assert.equal(effect.hidden, false);
   assert.match(
     documentObject.elements.get("level-up-badge").textContent,
@@ -2627,7 +2632,7 @@ test("the daily celebration dialog suppresses the level-up effect", () => {
   assert.equal(documentObject.elements.get("level-up-effect").hidden, true);
   assert.match(
     documentObject.elements.get("checkin-dialog-stats").textContent,
-    /Lv\. 21/,
+    /Lv\. 5/,
   );
 });
 
@@ -2636,6 +2641,6 @@ test("level-up effect is declared in the page shell", () => {
 
   assert.match(html, /id="level-up-effect"[^>]*aria-hidden="true"[^>]*hidden/);
   assert.match(html, /id="level-up-badge"/);
-  assert.match(html, /0 \/ 20 XP/);
-  assert.match(html, /aria-valuemax="20"/);
+  assert.match(html, /0 \/ 100 XP/);
+  assert.match(html, /aria-valuemax="100"/);
 });

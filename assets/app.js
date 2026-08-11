@@ -26,7 +26,7 @@
     anxious: "焦虑",
     frantic: "抓狂",
   });
-  const XP_PER_LEVEL = 20;
+  const XP_PER_LEVEL = 100;
   const LEVEL_UP_EFFECT_MS = 1300;
   const CHECKIN_SUCCESS_LABEL = "今日打卡成功";
   const CHECKIN_CELEBRATION_TITLE = "恭喜，今日打卡成功";

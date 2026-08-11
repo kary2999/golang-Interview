@@ -16,7 +16,7 @@ alwaysApply: true
 9. Keep source labels limited to `zhihu-archive` and `supplemented`.
 10. IDs 73, 89, and 90 are supplemented; never relabel them as article content.
 11. Regenerate `data/questions.js` through `scripts/build_questions.py`; do not hand-edit it.
-12. Preserve v2 plus safe v1 migration, 2/8/20 XP, review scheduling, and 10-rating study days.
+12. Preserve v3 plus safe v2 and v1 migration, 2/8/20 XP, 100 XP levels, review list without stream reinjection, and 20-distinct-question study days.
 13. Treat localStorage as per-device; import replaces only after confirmation, with no merge or cloud sync.
 14. Preserve Space, 1/2/3, arrows, J, storage recovery, accessibility, reduced motion, and 320px.
 15. Add a failing behavior test before changing JavaScript, Service Worker, or verifier behavior.
