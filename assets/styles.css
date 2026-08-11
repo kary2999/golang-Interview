@@ -399,6 +399,14 @@ button:not(:disabled):active,
   display: contents;
 }
 
+.build-tag {
+  align-self: center;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+}
+
 .utility-button {
   padding: 0 14px;
   border-color: var(--navy);

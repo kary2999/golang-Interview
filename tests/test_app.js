@@ -1713,6 +1713,61 @@ test("service worker registers only in secure contexts and surfaces updates", as
   assert.equal(reloads, 1);
 });
 
+test("the page shell shows which build is running", () => {
+  const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+  const worker = fs.readFileSync(
+    path.join(ROOT, "service-worker.js"),
+    "utf8",
+  );
+  const cacheName = worker.match(/const CACHE_NAME = "go-interview-(v\d+)"/);
+  const tag = html.match(/<span\b[^>]*id="build-tag"[^>]*>([^<]+)<\/span>/);
+
+  assert.ok(cacheName);
+  assert.ok(tag);
+  assert.equal(tag[1].trim(), cacheName[1]);
+});
+
+test("startup asks the browser to look for a newer worker", async () => {
+  const documentObject = makeFakeDocument();
+  const initial = createInitialState([1, 2, 3], () => 0);
+  const storage = makeStorage({
+    [STORAGE_KEY]: JSON.stringify(initial),
+  });
+  let updateChecks = 0;
+  const documentListeners = new Map();
+  documentObject.addEventListener = (name, handler) => {
+    documentListeners.set(name, handler);
+  };
+  const browserGlobal = makeBrowserGlobal({ reducedMotion: true, storage });
+  browserGlobal.location = { hostname: "example.test", protocol: "https:" };
+  browserGlobal.navigator.serviceWorker = {
+    addEventListener() {},
+    controller: {},
+    register() {
+      return {
+        addEventListener() {},
+        waiting: null,
+        update() {
+          updateChecks += 1;
+        },
+      };
+    },
+  };
+
+  startBrowserApp(documentObject, browserGlobal);
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(updateChecks, 1);
+
+  documentObject.visibilityState = "visible";
+  documentListeners.get("visibilitychange")();
+  await Promise.resolve();
+  await Promise.resolve();
+
+  assert.equal(updateChecks, 2);
+});
+
 test("a refused update explains itself in the visible notice", async () => {
   const documentObject = makeFakeDocument();
   const initial = createInitialState([1, 2, 3], () => 0);

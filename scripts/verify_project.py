@@ -121,6 +121,9 @@ _SERVICE_WORKER_APP_SHELL_RE = re.compile(
     r"(?P<entries>\[.*?\])\s*\)\s*;",
     re.DOTALL,
 )
+_BUILD_TAG_RE = re.compile(
+    r'<span\b[^>]*\bid="build-tag"[^>]*>(?P<tag>[^<]*)</span>'
+)
 _SERVICE_WORKER_CACHE_NAME_RE = re.compile(
     r'\bconst\s+CACHE_NAME\s*=\s*"(?P<name>[^"]+)"\s*;'
 )
@@ -741,6 +744,29 @@ def _require_service_worker_pattern(source, pattern, message):
         raise VerificationError(message)
 
 
+def _verify_build_tag(root, cache_name):
+    """页面必须显示当前构建号，用户才能自己判断加载的是不是新版。"""
+    index_path = root / "index.html"
+    if not index_path.is_file():
+        raise VerificationError("缺少 index.html")
+
+    try:
+        markup = index_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise VerificationError("index.html 无法读取") from error
+
+    tag_matches = list(_BUILD_TAG_RE.finditer(markup))
+    if len(tag_matches) != 1:
+        raise VerificationError("index.html 必须声明唯一构建号 build-tag")
+
+    tag = tag_matches[0].group("tag").strip()
+    expected = cache_name.rsplit("-", 1)[-1]
+    if tag != expected:
+        raise VerificationError(
+            "index.html 构建号 {} 与缓存 {} 不一致".format(tag, cache_name)
+        )
+
+
 def _verify_service_worker(root):
     worker_path = root / _PWA_SERVICE_WORKER_PATH
     if not worker_path.is_file():
@@ -806,6 +832,7 @@ def _verify_service_worker(root):
         raise VerificationError(
             "service-worker.js 缓存名必须是版本化 go-interview 缓存"
         )
+    _verify_build_tag(root, cache_name)
 
     listener_patterns = {
         event_name: re.compile(

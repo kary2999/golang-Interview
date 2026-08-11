@@ -222,6 +222,7 @@ def write_valid_page(root):
 </head>
 <body>
   <main id="app"></main>
+  <span id="build-tag" class="build-tag">v2</span>
   <script src="data/questions.js"></script>
   <script src="assets/app.js"></script>
 </body>
@@ -559,6 +560,28 @@ class VerifyProjectTest(unittest.TestCase):
 
             with self.assertRaises(VerificationError):
                 verify_pwa(root)
+
+    def test_pwa_contract_requires_a_build_tag_matching_the_cache(self):
+        mutations = {
+            "missing tag": lambda source: source.replace(
+                '  <span id="build-tag" class="build-tag">v2</span>\n',
+                "",
+            ),
+            "stale tag": lambda source: source.replace(">v2<", ">v1<"),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                with tempfile.TemporaryDirectory() as temporary_directory:
+                    root = Path(temporary_directory)
+                    write_valid_page(root)
+                    index_path = root / "index.html"
+                    index_path.write_text(
+                        mutate(index_path.read_text(encoding="utf-8")),
+                        encoding="utf-8",
+                    )
+
+                    with self.assertRaises(VerificationError):
+                        verify_pwa(root)
 
     def test_service_worker_rejects_remote_or_uncontrolled_cache_entries(self):
         mutations = {

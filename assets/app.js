@@ -2983,6 +2983,21 @@
       });
     }
 
+    // Without an explicit poll a stale worker can keep serving old assets for
+    // an entire session, so the banner never gets a chance to appear.
+    function checkForNewWorker(registration) {
+      if (typeof registration.update !== "function") {
+        return;
+      }
+      try {
+        Promise.resolve(registration.update()).catch(() => {
+          // A failed check just means the current worker stays in charge.
+        });
+      } catch (error) {
+        // Same fallback: the app keeps running on the installed worker.
+      }
+    }
+
     function setupServiceWorker() {
       const navigatorObject = browserGlobal.navigator || {};
       const serviceWorker = navigatorObject.serviceWorker;
@@ -3035,6 +3050,14 @@
               "updatefound",
               () => watchInstallingWorker(registration),
             );
+          }
+          checkForNewWorker(registration);
+          if (typeof documentObject.addEventListener === "function") {
+            documentObject.addEventListener("visibilitychange", () => {
+              if (documentObject.visibilityState === "visible") {
+                checkForNewWorker(registration);
+              }
+            });
           }
         })
         .catch(() => {
