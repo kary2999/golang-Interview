@@ -124,6 +124,9 @@ _SERVICE_WORKER_APP_SHELL_RE = re.compile(
 _BUILD_TAG_RE = re.compile(
     r'<span\b[^>]*\bid="build-tag"[^>]*>(?P<tag>[^<]*)</span>'
 )
+_BUILD_VERSION_RE = re.compile(
+    r'\bconst\s+BUILD_VERSION\s*=\s*"(?P<version>[^"]+)"\s*;'
+)
 _SERVICE_WORKER_CACHE_NAME_RE = re.compile(
     r'\bconst\s+CACHE_NAME\s*=\s*"(?P<name>[^"]+)"\s*;'
 )
@@ -764,6 +767,22 @@ def _verify_build_tag(root, cache_name):
     if tag != expected:
         raise VerificationError(
             "index.html 构建号 {} 与缓存 {} 不一致".format(tag, cache_name)
+        )
+
+    app_path = root / "assets" / "app.js"
+    try:
+        app_source = app_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise VerificationError("assets/app.js 无法读取") from error
+
+    version_matches = list(_BUILD_VERSION_RE.finditer(app_source))
+    if len(version_matches) != 1:
+        raise VerificationError("assets/app.js 必须声明唯一 BUILD_VERSION")
+    if version_matches[0].group("version") != expected:
+        raise VerificationError(
+            "assets/app.js BUILD_VERSION {} 与缓存 {} 不一致".format(
+                version_matches[0].group("version"), cache_name
+            )
         )
 
 

@@ -186,7 +186,8 @@ def write_valid_page(root):
         encoding="utf-8",
     )
     (root / "assets" / "app.js").write_text(
-        "// [skill: go-team-standards · dev-dna] 离线应用\n",
+        "// [skill: go-team-standards · dev-dna] 离线应用\n"
+        'const BUILD_VERSION = "v2";\n',
         encoding="utf-8",
     )
     (root / "data" / "questions.js").write_text(

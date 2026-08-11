@@ -28,6 +28,8 @@
   });
   const XP_PER_LEVEL = 100;
   const UPDATE_READY_MESSAGE = "新版本已准备好，可在保存当前进度后更新。";
+  // Mirrors the service worker cache version; kept in sync by verify_project.py.
+  const BUILD_VERSION = "v11";
   const LEVEL_UP_EFFECT_MS = 1300;
   const CHECKIN_SUCCESS_LABEL = "今日打卡成功";
   const CHECKIN_CELEBRATION_TITLE = "恭喜，今日打卡成功";
@@ -3036,7 +3038,12 @@
       }
       let registrationResult;
       try {
-        registrationResult = serviceWorker.register("./service-worker.js");
+        // GitHub Pages serves the worker with cache-control: max-age=600, so a
+        // plain registration can hand back a stale copy for a whole session.
+        // Busting the cache on the URL guarantees the browser checks bytes.
+        registrationResult = serviceWorker.register(
+          "./service-worker.js?v=" + BUILD_VERSION,
+        );
       } catch (error) {
         return;
       }

@@ -1699,7 +1699,7 @@ test("service worker registers only in secure contexts and surfaces updates", as
   await Promise.resolve();
   await Promise.resolve();
 
-  assert.equal(registeredPath, "./service-worker.js");
+  assert.equal(registeredPath, "./service-worker.js?v=v11");
   assert.equal(
     secureDocument.elements.get("update-notice").hidden,
     false,
