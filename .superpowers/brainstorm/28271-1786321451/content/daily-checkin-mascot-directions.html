@@ -1,0 +1,1876 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Go 冲刺营 · 打卡伙伴三方向</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --cream: #f7f3e9;
+      --cream-deep: #eee5cf;
+      --paper: #fffdf7;
+      --paper-muted: #f3eddf;
+      --navy: #17233f;
+      --navy-soft: #4e5870;
+      --purple: #6857e5;
+      --purple-dark: #4f3dc9;
+      --purple-soft: #eeeaff;
+      --yellow: #ffd765;
+      --yellow-soft: #fff4bd;
+      --orange: #f49a45;
+      --orange-soft: #ffead7;
+      --green: #267757;
+      --green-soft: #e6f5ec;
+      --red: #c94f47;
+      --red-soft: #fff0ec;
+      --line: 2px solid var(--navy);
+      --line-heavy: 3px solid var(--navy);
+      --shadow-small: 4px 4px 0 var(--navy);
+      --shadow-medium: 7px 7px 0 var(--navy);
+      font-family:
+        Inter,
+        ui-sans-serif,
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        sans-serif;
+      font-synthesis: none;
+    }
+
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+    }
+
+    html {
+      min-width: 320px;
+      min-height: 100%;
+      background: var(--cream);
+    }
+
+    body {
+      min-width: 320px;
+      min-height: 100vh;
+      margin: 0;
+      color: var(--navy);
+      background:
+        radial-gradient(circle at 8% 2%, rgb(104 87 229 / 12%), transparent 28rem),
+        radial-gradient(circle at 94% 8%, rgb(244 154 69 / 18%), transparent 28rem),
+        linear-gradient(155deg, var(--cream), var(--cream-deep));
+    }
+
+    body::before {
+      position: fixed;
+      z-index: -1;
+      inset: 0;
+      background-image:
+        linear-gradient(rgb(23 35 63 / 4%) 1px, transparent 1px),
+        linear-gradient(90deg, rgb(23 35 63 / 4%) 1px, transparent 1px);
+      background-size: 32px 32px;
+      content: "";
+      pointer-events: none;
+      mask-image: linear-gradient(to bottom, black, transparent 75%);
+    }
+
+    button {
+      font: inherit;
+    }
+
+    .page {
+      width: min(calc(100% - 32px), 1720px);
+      margin: 0 auto;
+      padding: 34px 0 64px;
+    }
+
+    .intro {
+      display: grid;
+      grid-template-columns: minmax(0, 1.25fr) minmax(360px, 0.75fr);
+      align-items: end;
+      gap: 28px;
+      margin-bottom: 22px;
+    }
+
+    .eyebrow,
+    .micro-label {
+      margin: 0;
+      color: var(--purple-dark);
+      font-size: 0.72rem;
+      font-weight: 950;
+      letter-spacing: 0.13em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      max-width: 18em;
+      margin: 7px 0 0;
+      font-size: clamp(2rem, 4vw, 3.4rem);
+      line-height: 1.05;
+      letter-spacing: -0.055em;
+    }
+
+    .intro-copy {
+      margin: 0;
+      color: var(--navy-soft);
+      font-size: 0.94rem;
+      font-weight: 650;
+      line-height: 1.75;
+    }
+
+    .truth-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin: 0 0 24px;
+      padding: 0;
+      list-style: none;
+    }
+
+    .truth-strip li {
+      min-width: 0;
+      padding: 11px 13px;
+      border: var(--line);
+      border-radius: 13px;
+      background: rgb(255 253 247 / 88%);
+      box-shadow: 3px 3px 0 var(--navy);
+      font-size: 0.77rem;
+      font-weight: 850;
+      line-height: 1.4;
+    }
+
+    .truth-strip strong {
+      color: var(--purple-dark);
+    }
+
+    .direction-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      align-items: start;
+      gap: 20px;
+    }
+
+    .direction-card {
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+      border: var(--line-heavy);
+      border-radius: 26px;
+      background: var(--paper);
+      box-shadow: var(--shadow-medium);
+      cursor: pointer;
+      transition:
+        transform 160ms ease,
+        box-shadow 160ms ease,
+        outline-color 160ms ease;
+    }
+
+    .direction-card:hover {
+      transform: translate(-2px, -2px);
+      box-shadow: 10px 10px 0 var(--navy);
+    }
+
+    .direction-card:focus-visible {
+      outline: 5px solid var(--orange);
+      outline-offset: 5px;
+    }
+
+    .direction-card.selected {
+      outline: 7px solid rgb(104 87 229 / 25%);
+      outline-offset: 5px;
+    }
+
+    .direction-card.selected .choice-callout {
+      color: #fff;
+      background: var(--purple);
+    }
+
+    .direction-card.recommended::after {
+      position: absolute;
+      z-index: 8;
+      top: 17px;
+      right: -36px;
+      width: 150px;
+      padding: 7px 0;
+      border-block: 2px solid var(--navy);
+      color: var(--navy);
+      background: var(--yellow);
+      content: "推荐";
+      font-size: 0.7rem;
+      font-weight: 950;
+      letter-spacing: 0.12em;
+      text-align: center;
+      transform: rotate(40deg);
+    }
+
+    .direction-heading {
+      position: relative;
+      z-index: 2;
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 12px;
+      padding: 20px 22px 18px;
+      border-bottom: var(--line);
+      background: var(--paper);
+    }
+
+    .direction-letter {
+      display: grid;
+      width: 39px;
+      height: 39px;
+      place-items: center;
+      border: var(--line);
+      border-radius: 12px;
+      color: #fff;
+      background: var(--purple);
+      box-shadow: 3px 3px 0 var(--navy);
+      font-size: 0.95rem;
+      font-weight: 950;
+      transform: rotate(-3deg);
+    }
+
+    .direction-heading h2 {
+      margin: 0;
+      padding-right: 28px;
+      font-size: 1.25rem;
+      line-height: 1.15;
+      letter-spacing: -0.025em;
+    }
+
+    .direction-heading p {
+      grid-column: 2;
+      margin: -5px 0 0;
+      color: var(--navy-soft);
+      font-size: 0.77rem;
+      font-weight: 650;
+      line-height: 1.55;
+    }
+
+    .mock-screen {
+      min-height: 1160px;
+      padding: 16px;
+      background:
+        radial-gradient(circle at 90% 0%, rgb(244 154 69 / 18%), transparent 16rem),
+        var(--cream);
+    }
+
+    .app-bar {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 11px;
+      border: var(--line);
+      border-radius: 15px;
+      background: rgb(255 253 247 / 94%);
+      box-shadow: 3px 3px 0 var(--navy);
+    }
+
+    .brand {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .brand-copy {
+      min-width: 0;
+    }
+
+    .brand-copy strong,
+    .brand-copy small {
+      display: block;
+    }
+
+    .brand-copy strong {
+      font-size: 0.82rem;
+      font-weight: 950;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-copy small {
+      margin-top: 2px;
+      color: var(--navy-soft);
+      font-size: 0.57rem;
+      font-weight: 750;
+    }
+
+    .os-lock {
+      flex: 0 0 auto;
+      padding: 6px 8px;
+      border: 1.5px solid var(--navy);
+      border-radius: 999px;
+      background: var(--purple-soft);
+      font-size: 0.55rem;
+      font-weight: 850;
+    }
+
+    .mascot {
+      --mascot-size: 42px;
+      position: relative;
+      display: inline-block;
+      width: var(--mascot-size);
+      height: calc(var(--mascot-size) * 0.84);
+      flex: 0 0 auto;
+      border: 2px solid var(--navy);
+      border-radius: 46% 46% 42% 42%;
+      background: var(--yellow);
+      box-shadow: 2px 2px 0 var(--navy);
+    }
+
+    .mascot::before,
+    .mascot::after {
+      position: absolute;
+      z-index: -1;
+      top: -18%;
+      width: 35%;
+      height: 42%;
+      border: 2px solid var(--navy);
+      border-radius: 70% 70% 20% 20%;
+      background: var(--orange);
+      content: "";
+    }
+
+    .mascot::before {
+      left: 3%;
+      transform: rotate(-21deg);
+    }
+
+    .mascot::after {
+      right: 3%;
+      transform: rotate(21deg);
+    }
+
+    .mascot.small {
+      --mascot-size: 34px;
+    }
+
+    .mascot.tiny {
+      --mascot-size: 29px;
+      border-width: 1.5px;
+      box-shadow: 1.5px 1.5px 0 var(--navy);
+    }
+
+    .mascot.hero {
+      --mascot-size: 112px;
+      border-width: 3px;
+      box-shadow: 6px 6px 0 var(--navy);
+    }
+
+    .mascot-face {
+      position: absolute;
+      inset: 0;
+    }
+
+    .eye {
+      position: absolute;
+      top: 34%;
+      width: 9%;
+      height: 13%;
+      border-radius: 50%;
+      background: var(--navy);
+    }
+
+    .eye.left {
+      left: 29%;
+    }
+
+    .eye.right {
+      right: 29%;
+    }
+
+    .mouth {
+      position: absolute;
+      top: 58%;
+      left: 50%;
+      width: 26%;
+      height: 17%;
+      border-bottom: 2px solid var(--navy);
+      border-radius: 0 0 999px 999px;
+      transform: translateX(-50%);
+    }
+
+    .mascot.anxious {
+      background: var(--yellow-soft);
+    }
+
+    .mascot.anxious .eye {
+      top: 35%;
+      height: 10%;
+      border-radius: 999px;
+      transform: rotate(11deg);
+    }
+
+    .mascot.anxious .eye.right {
+      transform: rotate(-11deg);
+    }
+
+    .mascot.anxious .mouth {
+      top: 61%;
+      width: 19%;
+      height: 12%;
+      border: 2px solid var(--navy);
+      border-radius: 50%;
+    }
+
+    .mascot.anxious .mascot-face::after {
+      position: absolute;
+      top: 31%;
+      right: 10%;
+      width: 8%;
+      height: 18%;
+      border: 1.5px solid var(--navy);
+      border-radius: 70% 30% 60% 40%;
+      background: #8ed8ff;
+      content: "";
+      transform: rotate(18deg);
+    }
+
+    .mascot.frantic {
+      background: var(--orange);
+      transform: rotate(-3deg);
+    }
+
+    .mascot.frantic .eye {
+      top: 33%;
+      width: 16%;
+      height: 3px;
+      border-radius: 999px;
+      transform: rotate(26deg);
+    }
+
+    .mascot.frantic .eye.right {
+      transform: rotate(-26deg);
+    }
+
+    .mascot.frantic .mouth {
+      top: 56%;
+      width: 26%;
+      height: 25%;
+      border: 2px solid var(--navy);
+      border-radius: 45% 45% 55% 55%;
+      background: var(--red-soft);
+    }
+
+    .mood-module {
+      margin-top: 12px;
+      padding: 11px;
+      border: 1.5px dashed rgb(23 35 63 / 45%);
+      border-radius: 14px;
+      background: rgb(255 253 247 / 66%);
+    }
+
+    .module-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 9px;
+      color: var(--navy-soft);
+      font-size: 0.6rem;
+      font-weight: 850;
+    }
+
+    .module-title strong {
+      color: var(--navy);
+      font-size: 0.66rem;
+    }
+
+    .mood-strip {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+    }
+
+    .mood-item {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 6px;
+      border: 1.5px solid var(--navy);
+      border-radius: 10px;
+      background: var(--paper);
+    }
+
+    .mood-item strong,
+    .mood-item small {
+      display: block;
+    }
+
+    .mood-item strong {
+      font-size: 0.58rem;
+      line-height: 1.2;
+    }
+
+    .mood-item small {
+      margin-top: 2px;
+      color: var(--navy-soft);
+      font-size: 0.47rem;
+      font-weight: 700;
+      line-height: 1.25;
+    }
+
+    .progress-panel {
+      margin-top: 13px;
+      padding: 13px;
+      border: var(--line);
+      border-radius: 15px;
+      background: var(--yellow);
+      box-shadow: 3px 3px 0 var(--navy);
+    }
+
+    .progress-copy {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .progress-copy h3,
+    .progress-copy p {
+      margin: 0;
+    }
+
+    .progress-copy h3 {
+      margin-top: 3px;
+      font-size: 0.92rem;
+      line-height: 1.2;
+    }
+
+    .progress-number {
+      flex: 0 0 auto;
+      font-size: 1.2rem;
+      font-weight: 950;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .progress-track {
+      height: 11px;
+      margin-top: 10px;
+      overflow: hidden;
+      border: 2px solid var(--navy);
+      border-radius: 999px;
+      background: rgb(255 255 255 / 76%);
+    }
+
+    .progress-track span {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--purple), var(--orange));
+    }
+
+    .progress-rule {
+      margin: 8px 0 0;
+      color: var(--navy-soft);
+      font-size: 0.57rem;
+      font-weight: 800;
+      line-height: 1.45;
+    }
+
+    .question-focus {
+      margin-top: 13px;
+      padding: 17px;
+      border: var(--line-heavy);
+      border-radius: 18px;
+      background: var(--paper);
+      box-shadow: 5px 5px 0 var(--navy);
+    }
+
+    .question-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--purple-dark);
+      font-size: 0.57rem;
+      font-weight: 950;
+      letter-spacing: 0.09em;
+      text-transform: uppercase;
+    }
+
+    .question-meta span:last-child {
+      padding: 4px 7px;
+      border-radius: 999px;
+      color: var(--navy);
+      background: var(--purple-soft);
+      letter-spacing: 0;
+      text-transform: none;
+    }
+
+    .question-focus h4 {
+      margin: 13px 0 0;
+      font-size: 1.13rem;
+      line-height: 1.35;
+      letter-spacing: -0.03em;
+    }
+
+    .question-hint {
+      margin: 8px 0 0;
+      color: var(--navy-soft);
+      font-size: 0.65rem;
+      font-weight: 650;
+      line-height: 1.55;
+    }
+
+    .fake-action {
+      margin-top: 12px;
+      padding: 10px;
+      border: var(--line);
+      border-radius: 11px;
+      color: #fff;
+      background: var(--orange);
+      box-shadow: 3px 3px 0 var(--navy);
+      font-size: 0.68rem;
+      font-weight: 950;
+      text-align: center;
+    }
+
+    .feedback {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: 11px;
+      padding: 9px 10px;
+      border: 1.5px solid var(--navy);
+      border-radius: 10px;
+      background: var(--green-soft);
+      font-size: 0.63rem;
+      font-weight: 950;
+    }
+
+    .feedback.fuzzy {
+      background: var(--yellow-soft);
+    }
+
+    .feedback.hard {
+      background: var(--red-soft);
+    }
+
+    .feedback small {
+      flex: 0 0 auto;
+      color: var(--navy-soft);
+      font-size: 0.49rem;
+      font-weight: 750;
+    }
+
+    .secondary-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 15px 1px 8px;
+      color: var(--navy-soft);
+      font-size: 0.57rem;
+      font-weight: 900;
+    }
+
+    .secondary-label::after {
+      height: 1px;
+      flex: 1;
+      background: rgb(23 35 63 / 22%);
+      content: "";
+    }
+
+    .secondary-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .preview-panel {
+      min-width: 0;
+      padding: 10px;
+      border: 1.5px solid var(--navy);
+      border-radius: 12px;
+      background: var(--paper);
+      box-shadow: 2px 2px 0 var(--navy);
+    }
+
+    .preview-panel h5 {
+      margin: 0;
+      font-size: 0.67rem;
+    }
+
+    .preview-panel > p {
+      margin: 4px 0 0;
+      color: var(--navy-soft);
+      font-size: 0.49rem;
+      font-weight: 700;
+      line-height: 1.4;
+    }
+
+    .calendar {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 3px;
+      margin-top: 8px;
+    }
+
+    .day {
+      display: flex;
+      min-width: 0;
+      min-height: 38px;
+      align-items: center;
+      flex-direction: column;
+      justify-content: center;
+      padding: 3px 1px;
+      border: 1px solid rgb(23 35 63 / 28%);
+      border-radius: 7px;
+      background: var(--paper-muted);
+      font-size: 0.42rem;
+      font-weight: 900;
+      line-height: 1.15;
+      text-align: center;
+    }
+
+    .day b {
+      font-size: 0.55rem;
+    }
+
+    .day.checked {
+      border-color: var(--navy);
+      color: #fff;
+      background: var(--purple);
+    }
+
+    .day.partial {
+      border-color: var(--navy);
+      background: var(--yellow);
+    }
+
+    .day.missed {
+      border-color: var(--navy);
+      color: var(--navy);
+      background: var(--orange-soft);
+    }
+
+    .day.today {
+      border: 2px solid var(--purple);
+      background: #fff;
+      box-shadow: inset 0 0 0 1px var(--navy);
+    }
+
+    .calendar-key {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 7px;
+      margin-top: 7px;
+      color: var(--navy-soft);
+      font-size: 0.42rem;
+      font-weight: 800;
+    }
+
+    .calendar-key span::before {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      margin-right: 3px;
+      border: 1px solid var(--navy);
+      border-radius: 2px;
+      background: var(--key-color);
+      content: "";
+    }
+
+    .notebook-list {
+      display: grid;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .notebook-item {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 5px;
+      padding: 6px;
+      border: 1px solid rgb(23 35 63 / 25%);
+      border-radius: 7px;
+      background: var(--paper-muted);
+      font-size: 0.47rem;
+      font-weight: 750;
+      line-height: 1.35;
+    }
+
+    .status {
+      align-self: start;
+      padding: 2px 4px;
+      border: 1px solid var(--navy);
+      border-radius: 999px;
+      background: var(--yellow);
+      font-size: 0.4rem;
+      font-weight: 950;
+      white-space: nowrap;
+    }
+
+    .status.hard {
+      background: var(--orange-soft);
+    }
+
+    .notebook-rule {
+      margin-top: 7px;
+      padding-top: 6px;
+      border-top: 1px dashed rgb(23 35 63 / 30%);
+      color: var(--navy-soft);
+      font-size: 0.44rem;
+      font-weight: 800;
+      line-height: 1.4;
+    }
+
+    .success-state {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+      padding: 8px 10px;
+      border: 1.5px solid var(--navy);
+      border-radius: 11px;
+      background: var(--green-soft);
+      box-shadow: 2px 2px 0 var(--navy);
+    }
+
+    .success-state strong,
+    .success-state small {
+      display: block;
+    }
+
+    .success-state strong {
+      font-size: 0.66rem;
+    }
+
+    .success-state small {
+      margin-top: 2px;
+      color: var(--navy-soft);
+      font-size: 0.47rem;
+      font-weight: 750;
+    }
+
+    .pros-cons {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+      border-top: var(--line);
+      background: var(--paper);
+    }
+
+    .pros-cons section {
+      min-width: 0;
+      padding: 14px 16px;
+    }
+
+    .pros-cons section + section {
+      border-left: 1px solid rgb(23 35 63 / 22%);
+    }
+
+    .pros-cons h3 {
+      margin: 0 0 7px;
+      font-size: 0.68rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .pros-cons ul {
+      margin: 0;
+      padding-left: 16px;
+      color: var(--navy-soft);
+      font-size: 0.66rem;
+      font-weight: 650;
+      line-height: 1.55;
+    }
+
+    .pros-cons li + li {
+      margin-top: 3px;
+    }
+
+    .choice-callout {
+      margin: 0;
+      padding: 13px 16px;
+      border-top: var(--line);
+      background: var(--yellow-soft);
+      font-size: 0.74rem;
+      font-weight: 950;
+      text-align: center;
+      transition:
+        color 160ms ease,
+        background-color 160ms ease;
+    }
+
+    /* A · Sprint Companion */
+    .direction-a .progress-track span {
+      width: 0%;
+    }
+
+    .direction-a .progress-panel {
+      background: var(--yellow);
+    }
+
+    .direction-a .secondary-grid {
+      opacity: 0.94;
+    }
+
+    /* B · Motivation Coach */
+    .direction-b .mock-screen {
+      background:
+        radial-gradient(circle at 50% 7%, rgb(255 215 101 / 72%), transparent 17rem),
+        linear-gradient(175deg, var(--purple-soft), var(--cream) 42%);
+    }
+
+    .coach-hero {
+      position: relative;
+      display: grid;
+      grid-template-columns: 128px minmax(0, 1fr);
+      align-items: center;
+      gap: 12px;
+      margin-top: 13px;
+      padding: 17px 14px;
+      overflow: hidden;
+      border: var(--line-heavy);
+      border-radius: 20px;
+      background: var(--yellow);
+      box-shadow: 5px 5px 0 var(--navy);
+    }
+
+    .coach-hero::after {
+      position: absolute;
+      right: -35px;
+      bottom: -38px;
+      width: 130px;
+      height: 130px;
+      border: 22px solid rgb(104 87 229 / 12%);
+      border-radius: 50%;
+      content: "";
+    }
+
+    .coach-message {
+      position: relative;
+      z-index: 1;
+      min-width: 0;
+    }
+
+    .coach-message p,
+    .coach-message h3 {
+      margin: 0;
+    }
+
+    .coach-message p {
+      color: var(--purple-dark);
+      font-size: 0.58rem;
+      font-weight: 950;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .coach-message h3 {
+      margin-top: 5px;
+      font-size: 1.38rem;
+      line-height: 1.08;
+      letter-spacing: -0.04em;
+    }
+
+    .coach-message small {
+      display: block;
+      margin-top: 7px;
+      color: var(--navy-soft);
+      font-size: 0.55rem;
+      font-weight: 800;
+      line-height: 1.45;
+    }
+
+    .coach-progress {
+      display: grid;
+      grid-template-columns: 108px 1fr;
+      align-items: center;
+      gap: 13px;
+      margin-top: 13px;
+      padding: 14px;
+      border: var(--line);
+      border-radius: 17px;
+      background: var(--paper);
+      box-shadow: 3px 3px 0 var(--navy);
+    }
+
+    .progress-ring {
+      display: grid;
+      width: 102px;
+      height: 102px;
+      place-items: center;
+      border: 2px solid var(--navy);
+      border-radius: 50%;
+      background:
+        radial-gradient(circle, var(--paper) 53%, transparent 54%),
+        conic-gradient(var(--purple) 0 70%, var(--paper-muted) 70% 100%);
+      box-shadow: 3px 3px 0 var(--navy);
+    }
+
+    .progress-ring strong,
+    .progress-ring small {
+      display: block;
+      text-align: center;
+    }
+
+    .progress-ring strong {
+      font-size: 1.25rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .progress-ring small {
+      margin-top: 1px;
+      color: var(--navy-soft);
+      font-size: 0.45rem;
+      font-weight: 800;
+    }
+
+    .coach-progress h4 {
+      margin: 0;
+      font-size: 0.82rem;
+    }
+
+    .coach-progress p {
+      margin: 6px 0 0;
+      color: var(--navy-soft);
+      font-size: 0.54rem;
+      font-weight: 750;
+      line-height: 1.45;
+    }
+
+    .coach-progress .remaining {
+      display: inline-block;
+      margin-top: 7px;
+      padding: 5px 7px;
+      border: 1px solid var(--navy);
+      border-radius: 999px;
+      background: var(--orange-soft);
+      font-size: 0.49rem;
+      font-weight: 950;
+    }
+
+    .direction-b .question-focus {
+      padding: 14px;
+    }
+
+    .stamp-calendar {
+      margin-top: 12px;
+      padding: 12px;
+      border: var(--line);
+      border-radius: 16px;
+      background:
+        linear-gradient(rgb(255 253 247 / 80%), rgb(255 253 247 / 80%)),
+        repeating-linear-gradient(-45deg, var(--orange-soft) 0 8px, transparent 8px 16px);
+      box-shadow: 3px 3px 0 var(--navy);
+    }
+
+    .stamp-calendar h4 {
+      margin: 0;
+      font-size: 0.73rem;
+    }
+
+    .stamp-row {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 4px;
+      margin-top: 9px;
+    }
+
+    .stamp {
+      display: grid;
+      min-width: 0;
+      aspect-ratio: 1;
+      place-items: center;
+      border: 2px solid var(--navy);
+      border-radius: 50%;
+      background: var(--paper);
+      font-size: 0.43rem;
+      font-weight: 950;
+      line-height: 1.1;
+      text-align: center;
+      transform: rotate(-5deg);
+    }
+
+    .stamp:nth-child(even) {
+      transform: rotate(4deg);
+    }
+
+    .stamp.checked {
+      color: #fff;
+      background: var(--purple);
+    }
+
+    .stamp.partial {
+      background: var(--yellow);
+    }
+
+    .stamp.missed {
+      background: var(--orange-soft);
+    }
+
+    .stamp.today {
+      border: 3px double var(--purple);
+      background: #fff;
+      transform: rotate(0);
+    }
+
+    .ticket-notebook {
+      margin-top: 10px;
+      padding: 12px;
+      border: var(--line);
+      border-radius: 3px 15px 15px 3px;
+      background: var(--purple-soft);
+      box-shadow: 3px 3px 0 var(--navy);
+    }
+
+    .ticket-notebook h4 {
+      margin: 0;
+      font-size: 0.72rem;
+    }
+
+    .ticket-notebook .notebook-item {
+      background: var(--paper);
+    }
+
+    /* C · Progress Journal */
+    .direction-c .mock-screen {
+      background:
+        linear-gradient(rgb(255 253 247 / 50%), rgb(255 253 247 / 50%)),
+        var(--cream);
+    }
+
+    .journal-summary {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr 0.8fr;
+      gap: 7px;
+      margin-top: 12px;
+    }
+
+    .metric {
+      min-width: 0;
+      padding: 10px;
+      border: 1.5px solid var(--navy);
+      border-radius: 11px;
+      background: var(--paper);
+      box-shadow: 2px 2px 0 var(--navy);
+    }
+
+    .metric.primary {
+      background: var(--purple);
+      color: #fff;
+    }
+
+    .metric span,
+    .metric strong,
+    .metric small {
+      display: block;
+    }
+
+    .metric span {
+      font-size: 0.47rem;
+      font-weight: 850;
+    }
+
+    .metric strong {
+      margin-top: 4px;
+      font-size: 1rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .metric small {
+      margin-top: 2px;
+      font-size: 0.41rem;
+      font-weight: 700;
+      opacity: 0.85;
+    }
+
+    .journal-layout {
+      display: grid;
+      grid-template-columns: 1.05fr 0.95fr;
+      gap: 8px;
+      margin-top: 11px;
+    }
+
+    .journal-calendar,
+    .journal-notebook {
+      min-width: 0;
+      padding: 11px;
+      border: var(--line);
+      border-radius: 14px;
+      background: var(--paper);
+      box-shadow: 3px 3px 0 var(--navy);
+    }
+
+    .journal-calendar h4,
+    .journal-notebook h4 {
+      margin: 0;
+      font-size: 0.72rem;
+    }
+
+    .journal-calendar .calendar {
+      gap: 4px;
+    }
+
+    .journal-calendar .day {
+      min-height: 48px;
+    }
+
+    .journal-notebook .notebook-item {
+      display: block;
+      padding: 8px;
+    }
+
+    .journal-notebook .status {
+      display: inline-block;
+      margin-top: 6px;
+    }
+
+    .journal-question {
+      margin-top: 11px;
+      padding: 12px;
+      border: 1.5px solid var(--navy);
+      border-radius: 13px;
+      background: var(--paper-muted);
+    }
+
+    .journal-question h4 {
+      margin: 5px 0 0;
+      font-size: 0.85rem;
+      line-height: 1.35;
+    }
+
+    .journal-question .feedback {
+      margin-top: 9px;
+    }
+
+    .direction-c .mood-module {
+      padding: 9px;
+      background: var(--paper);
+    }
+
+    .direction-c .mood-item {
+      padding: 5px;
+      border-color: rgb(23 35 63 / 34%);
+      box-shadow: none;
+    }
+
+    @media (max-width: 1280px) {
+      .direction-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .direction-card {
+        width: min(100%, 720px);
+        margin-inline: auto;
+      }
+
+      .mock-screen {
+        min-height: 0;
+        padding: 20px;
+      }
+    }
+
+    @media (max-width: 820px) {
+      .page {
+        width: min(calc(100% - 20px), 1720px);
+        padding-top: 22px;
+      }
+
+      .intro {
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+
+      .truth-strip {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 520px) {
+      .page {
+        width: min(calc(100% - 12px), 1720px);
+      }
+
+      .truth-strip {
+        grid-template-columns: 1fr;
+      }
+
+      .direction-heading {
+        padding-inline: 15px;
+      }
+
+      .mock-screen {
+        padding: 11px;
+      }
+
+      .os-lock {
+        display: none;
+      }
+
+      .mood-strip {
+        grid-template-columns: 1fr;
+      }
+
+      .mood-item {
+        padding-inline: 9px;
+      }
+
+      .secondary-grid,
+      .journal-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .coach-hero {
+        grid-template-columns: 94px 1fr;
+      }
+
+      .mascot.hero {
+        --mascot-size: 82px;
+      }
+
+      .coach-progress {
+        grid-template-columns: 90px 1fr;
+      }
+
+      .progress-ring {
+        width: 84px;
+        height: 84px;
+      }
+
+      .journal-summary {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .journal-summary .primary {
+        grid-column: 1 / -1;
+      }
+
+      .pros-cons {
+        grid-template-columns: 1fr;
+      }
+
+      .pros-cons section + section {
+        border-top: 1px solid rgb(23 35 63 / 22%);
+        border-left: 0;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="intro">
+      <div>
+        <p class="eyebrow">Design-only · Daily check-in companion</p>
+        <h1>同一套打卡规则，三种陪练性格</h1>
+      </div>
+      <p class="intro-copy">
+        三个方向都沿用 B1 的奶油底、海军蓝描边、紫黄橙强调色。
+        差别只在“题目、吉祥物、进度复盘”谁占据第一视觉层级。
+        点击任一整张方案卡即可选择。
+      </p>
+    </header>
+
+    <ul class="truth-strip" aria-label="三个方案共同遵守的产品规则">
+      <li><strong>20 道不同题</strong>完成自评，才算本地当日打卡</li>
+      <li><strong>揭晓 / 跳过不计数</strong>，重复题也不会重复累计</li>
+      <li><strong>按本地时间变心情</strong>，20/20 后立即恢复普通</li>
+      <li><strong>PWA 系统图标固定</strong>，只更换应用内 Logo / 吉祥物</li>
+    </ul>
+
+    <section class="direction-grid" aria-label="三个打卡伙伴 UI 方向">
+      <article
+        class="direction-card direction-a recommended"
+        data-choice="a-sprint-companion"
+        tabindex="0"
+        role="button"
+        aria-label="选择 A：Sprint Companion 冲刺伙伴"
+        onclick="toggleSelect(this)"
+        onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSelect(this)}"
+      >
+        <header class="direction-heading">
+          <span class="direction-letter" aria-hidden="true">A</span>
+          <h2>Sprint Companion · 冲刺伙伴</h2>
+          <p>保留单卡快刷为绝对主角，吉祥物只在页头与即时反馈中轻量陪伴。</p>
+        </header>
+
+        <div class="mock-screen">
+          <header class="app-bar">
+            <div class="brand">
+              <span class="mascot small normal" aria-label="普通心情吉祥物">
+                <span class="mascot-face">
+                  <i class="eye left"></i><i class="eye right"></i><i class="mouth"></i>
+                </span>
+              </span>
+              <span class="brand-copy">
+                <strong>Go 冲刺营</strong>
+                <small>应用内冲刺伙伴 · 单卡快刷</small>
+              </span>
+            </div>
+            <span class="os-lock">系统图标固定</span>
+          </header>
+
+          <section class="progress-panel" aria-label="今日打卡进度">
+            <div class="progress-copy">
+              <div>
+                <p class="micro-label">Today · 本地日</p>
+                <h3>今日打卡</h3>
+              </div>
+              <strong class="progress-number">0 / 20</strong>
+            </div>
+            <div class="progress-track" aria-label="今日完成 0 道不同题"><span></span></div>
+            <p class="progress-rule">仅完成自评的不同题计数；揭晓、跳过与重复自评都不增加进度。</p>
+          </section>
+
+          <section class="mood-module" aria-label="未完成时的本地时间心情">
+            <div class="module-title">
+              <strong>未完成时，跟随本地时间</strong>
+              <span>轻量状态预览</span>
+            </div>
+            <div class="mood-strip">
+              <div class="mood-item">
+                <span class="mascot tiny normal" aria-hidden="true">
+                  <span class="mascot-face">
+                    <i class="eye left"></i><i class="eye right"></i><i class="mouth"></i>
+                  </span>
+                </span>
+                <span><strong>普通</strong><small>00:00–15:00</small></span>
+              </div>
+              <div class="mood-item">
+                <span class="mascot tiny anxious" aria-hidden="true">
+                  <span class="mascot-face">
+                    <i class="eye left"></i><i class="eye right"></i><i class="mouth"></i>
+                  </span>
+                </span>
+                <span><strong>焦虑</strong><small>15:00–21:00</small></span>
+              </div>
+              <div class="mood-item">
+                <span class="mascot tiny frantic" aria-hidden="true">
+                  <span class="mascot-face">
+                    <i class="eye left"></i><i class="eye right"></i><i class="mouth"></i>
+                  </span>
+                </span>
+                <span><strong>抓狂</strong><small>21:00–24:00</small></span>
+              </div>
+            </div>
+          </section>
+
+          <article class="question-focus" aria-label="单卡刷题与掌握反馈预览">
+            <div class="question-meta">
+              <span>第 1 道不同题</span>
+              <span>语言基础</span>
+            </div>
+            <h4>Go 中 defer 的执行顺序和参数求值时机是什么？</h4>
+            <p class="question-hint">先说出后进先出、注册时求值、闭包读取时机，再揭晓参考答案。</p>
+            <div class="fake-action">揭晓参考答案</div>
+            <div class="feedback">
+              <span>✓ 已掌握，干得漂亮</span>
+              <small>+20 XP · 次要信息</small>
+            </div>
+          </article>
+
+          <p class="secondary-label">二级入口打开后的面板预览</p>
+          <div class="secondary-grid">
+            <section class="preview-panel" aria-label="打卡日历二级面板">
+              <h5>打卡日历</h5>
+              <p>近 7 天 · 2026 年 8 月</p>
+              <div class="calendar" aria-label="打卡状态日历">
+                <span class="day checked"><b>04</b>✓</span>
+                <span class="day partial"><b>05</b>11/20</span>
+                <span class="day missed"><b>06</b>错过</span>
+                <span class="day checked"><b>07</b>✓</span>
+                <span class="day checked"><b>08</b>✓</span>
+                <span class="day partial"><b>09</b>6/20</span>
+                <span class="day today"><b>10</b>今天</span>
+              </div>
+              <div class="calendar-key">
+                <span style="--key-color:var(--purple)">已打卡</span>
+                <span style="--key-color:var(--yellow)">部分</span>
+                <span style="--key-color:var(--orange-soft)">错过</span>
+                <span style="--key-color:#fff">今天</span>
+              </div>
+            </section>
+
+            <section class="preview-panel" aria-label="错题本二级面板">
+              <h5>错题本</h5>
+              <p>系统自动整理，不需要手动收藏</p>
+              <div class="notebook-list">
+                <div class="notebook-item">
+                  <span>GMP 调度模型中 P 的作用是什么？</span>
+                  <span class="status">模糊</span>
+                </div>
+                <div class="notebook-item">
+                  <span>向已关闭 channel 发送会发生什么？</span>
+                  <span class="status hard">不会</span>
+                </div>
+              </div>
+              <div class="notebook-rule">模糊 / 不会自动收录；改评“掌握”后立即移出。</div>
+            </section>
+          </div>
+
+          <div class="success-state" aria-label="20 道完成后的成功状态">
+            <span class="mascot tiny normal" aria-hidden="true">
+              <span class="mascot-face">
+                <i class="eye left"></i><i class="eye right"></i><i class="mouth"></i>
+              </span>
+            </span>
+            <span>
+              <strong>今日打卡成功</strong>
+              <small>20 / 20 后立即恢复普通表情，不再显示焦虑或抓狂。</small>
+            </span>
+          </div>
+        </div>
+
+        <div class="pros-cons">
+          <section>
+            <h3>优点</h3>
+            <ul>
+              <li>最接近现有单卡快刷节奏</li>
+              <li>日历与错题本不抢答题注意力</li>
+            </ul>
+          </section>
+          <section>
+            <h3>代价</h3>
+            <ul>
+              <li>复盘数据需要多点一次</li>
+              <li>催练情绪比 B 更克制</li>
+            </ul>
+          </section>
+        </div>
+        <p class="choice-callout">选择 A · 保持专注，只加恰到好处的陪伴</p>
+      </article>
+
+      <article
+        class="direction-card direction-b"
+        data-choice="b-motivation-coach"
+        tabindex="0"
+        role="button"
+        aria-label="选择 B：Motivation Coach 动力教练"
+        onclick="toggleSelect(this)"
+        onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSelect(this)}"
+      >
+        <header class="direction-heading">
+          <span class="direction-letter" aria-hidden="true">B</span>
+          <h2>Motivation Coach · 动力教练</h2>
+          <p>把吉祥物和“今天还差几题”推到首屏，用更强的情绪与仪式感促成完成。</p>
+        </header>
+
+        <div class="mock-screen">
+          <header class="app-bar">
+            <div class="brand">
+              <span class="mascot small anxious" aria-label="焦虑心情吉祥物">
+                <span class="mascot-face">
+                  <i class="eye left"></i><i class="eye right"></i><i class="mouth"></i>
+                </span>
+              </span>
+              <span class="brand-copy">
+                <strong>Go 冲刺营</strong>
+                <small>应用内动力教练</small>
+              </span>
+            </div>
+            <span class="os-lock">PWA 图标不变</span>
+          </header>
+
+          <section class="coach-hero" aria-label="焦虑时段的动力教练">
+            <span class="mascot hero anxious" aria-hidden="true">
+              <span class="mascot-face">
+                <i class="eye left"></i><i class="eye right"></i><i class="mouth"></i>
+              </span>
+            </span>
+            <div class="coach-message">
+              <p>本地时间 16:40</p>
+              <h3>再完成 6 题，今天就稳了！</h3>
+              <small>当前为“焦虑”心情，但只提醒进度，不制造失败惩罚。</small>
+            </div>
+          </section>
+
+          <section class="coach-progress" aria-label="大型今日打卡进度">
+            <div class="progress-ring">
+              <span><strong>14 / 20</strong><small>不同题已自评</small></span>
+            </div>
+            <div>
+              <h4>今日冲刺还差 6 题</h4>
+              <p>按本地日累计。仅自评后的不同题有效；揭晓、跳过与重复题不计数。</p>
+              <span class="remaining">完成度 70%</span>
+            </div>
+          </section>
+
+          <section class="mood-module" aria-label="动力教练三种心情">
+            <div class="module-title">
+              <strong>未完成时的催练强度</strong>
+              <span>时间越晚越紧迫</span>
+            </div>
+            <div class="mood-strip">
+              <div class="mood-item">
+                <span class="mascot tiny normal" aria-hidden="true">
+                  <span class="mascot-face">
+                    <i class="eye left"></i><i class="eye right"></i><i class="mouth"></i>
+                  </span>
+                </span>
+                <span><strong>普通</strong><small>00:00–15:00</small></span>
+              </div>
+              <div class="mood-item">
+                <span class="mascot tiny anxious" aria-hidden="true">
+                  <span class="mascot-face">
+                    <i class="eye left"></i><i class="eye right"></i><i class="mouth"></i>
+                  </span>
+                </span>
+                <span><strong>焦虑</strong><small>15:00–21:00</small></span>
+              </div>
+              <div class="mood-item">
+                <span class="mascot tiny frantic" aria-hidden="true">
+                  <span class="mascot-face">
+                    <i class="eye left"></i><i class="eye right"></i><i class="mouth"></i>
+                  </span>
+                </span>
+                <span><strong>抓狂</strong><small>21:00–24:00</small></span>
+              </div>
+            </div>
+          </section>
+
+          <article class="question-focus" aria-label="模糊评分后的鼓励反馈">
+            <div class="question-meta">
+              <span>冲刺第 15 题</span>
+              <span>并发</span>
+            </div>
+            <h4>context 取消信号是如何向下游传播的？</h4>
+            <div class="feedback fuzzy">
+              <span>◐ 加油，已经很棒了</span>
+              <small>+8 XP · 次要信息</small>
+            </div>
+          </article>
+
+          <section class="stamp-calendar" aria-label="印章式打卡日历">
+            <h4>本周打卡印章</h4>
+            <div class="stamp-row">
+              <span class="stamp checked">04<br>已打卡</span>
+              <span class="stamp partial">05<br>11/20</span>
+              <span class="stamp missed">06<br>错过</span>
+              <span class="stamp checked">07<br>已打卡</span>
+              <span class="stamp checked">08<br>已打卡</span>
+              <span class="stamp partial">09<br>6/20</span>
+              <span class="stamp today">10<br>今天</span>
+            </div>
+            <div class="calendar-key">
+              <span style="--key-color:var(--purple)">已打卡</span>
+              <span style="--key-color:var(--yellow)">部分</span>
+              <span style="--key-color:var(--orange-soft)">错过</span>
+              <span style="--key-color:#fff">今天</span>
+            </div>
+          </section>
+
+          <section class="ticket-notebook" aria-label="动力教练错题本预览">
+            <h4>教练帮你收好的错题</h4>
+            <div class="notebook-list">
+              <div class="notebook-item">
+                <span>slice 扩容时底层数组如何变化？</span>
+                <span class="status">模糊 · 自动收录</span>
+              </div>
+              <div class="notebook-item">
+                <span>无缓冲 channel 的发送何时解除阻塞？</span>
+                <span class="status hard">不会 · 自动收录</span>
+              </div>
+            </div>
+            <div class="notebook-rule">以后评为“掌握”时自动移出；XP 不影响错题本规则。</div>
+          </section>
+
+          <div class="success-state" aria-label="动力教练完成状态">
+            <span class="mascot tiny normal" aria-hidden="true">
+              <span class="mascot-face">
+                <i class="eye left"></i><i class="eye right"></i><i class="mouth"></i>
+              </span>
+            </span>
+            <span>
+              <strong>今日打卡成功</strong>
+              <small>达到 20 / 20 的瞬间，动力教练立刻恢复普通心情。</small>
+            </span>
+          </div>
+        </div>
+
+        <div class="pros-cons">
+          <section>
+            <h3>优点</h3>
+            <ul>
+              <li>完成目标与剩余题数最醒目</li>
+              <li>印章日历强化每日仪式感</li>
+            </ul>
+          </section>
+          <section>
+            <h3>代价</h3>
+            <ul>
+              <li>吉祥物会与题目争夺首屏</li>
+              <li>晚间抓狂可能让部分用户有压力</li>
+            </ul>
+          </section>
+        </div>
+        <p class="choice-callout">选择 B · 用更强情绪把今天的 20 题推完</p>
+      </article>
+
+      <article
+        class="direction-card direction-c"
+        data-choice="c-progress-journal"
+        tabindex="0"
+        role="button"
+        aria-label="选择 C：Progress Journal 进度手帐"
+        onclick="toggleSelect(this)"
+        onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleSelect(this)}"
+      >
+        <header class="direction-heading">
+          <span class="direction-letter" aria-hidden="true">C</span>
+          <h2>Progress Journal · 进度手帐</h2>
+          <p>日历与错题本成为主工作区，吉祥物退到状态标识，更适合复盘与规划。</p>
+        </header>
+
+        <div class="mock-screen">
+          <header class="app-bar">
+            <div class="brand">
+              <span class="mascot tiny normal" aria-label="安静的应用内吉祥物">
+                <span class="mascot-face">
+                  <i class="eye left"></i><i class="eye right"></i><i class="mouth"></i>
+                </span>
+              </span>
+              <span class="brand-copy">
+                <strong>Go 学习手帐</strong>
+                <small>进度总览 · 应用内形象</small>
+              </span>
+            </div>
+            <span class="os-lock">安装图标固定</span>
+          </header>
+
+          <section class="journal-summary" aria-label="今日学习数据摘要">
+            <div class="metric primary">
+              <span>今日打卡进度</span>
+              <strong>8 / 20</strong>
+              <small>完成自评的不同题</small>
+            </div>
+            <div class="metric">
+              <span>还差</span>
+              <strong>12 题</strong>
+              <small>揭晓 / 跳过不计</small>
+            </div>
+            <div class="metric">
+              <span>本地日期</span>
+              <strong>8 月 10 日</strong>
+              <small>跨日后重新计数</small>
+            </div>
+          </section>
+
+          <section class="mood-module" aria-label="手帐中的紧凑心情图例">
+            <div class="module-title">
+              <strong>吉祥物只做时间状态标识</strong>
+              <span>未完成时</span>
+            </div>
+            <div class="mood-strip">
+              <div class="mood-item">
+                <span class="mascot tiny normal" aria-hidden="true">
+                  <span class="mascot-face">
+                    <i class="eye left"></i><i class="eye right"></i><i class="mouth"></i>
+                  </span>
+                </span>
+                <span><strong>普通</strong><small>00:00–15:00</small></span>
+              </div>
+              <div class="mood-item">
+                <span class="mascot tiny anxious" aria-hidden="true">
+                  <span class="mascot-face">
+                    <i class="eye left"></i><i class="eye right"></i><i class="mouth"></i>
+                  </span>
+                </span>
+                <span><strong>焦虑</strong><small>15:00–21:00</small></span>
+              </div>
+              <div class="mood-item">
+                <span class="mascot tiny frantic" aria-hidden="true">
+                  <span class="mascot-face">
+                    <i class="eye left"></i><i class="eye right"></i><i class="mouth"></i>
+                  </span>
+                </span>
+                <span><strong>抓狂</strong><small>21:00–24:00</small></span>
+              </div>
+            </div>
+          </section>
+
+          <div class="journal-layout">
+            <section class="journal-calendar" aria-label="醒目的打卡日历">
+              <h4>8 月打卡记录</h4>
+              <div class="calendar" aria-label="近七天打卡状态">
+                <span class="day checked"><b>04</b>已打卡</span>
+                <span class="day partial"><b>05</b>11/20</span>
+                <span class="day missed"><b>06</b>错过</span>
+                <span class="day checked"><b>07</b>已打卡</span>
+                <span class="day checked"><b>08</b>已打卡</span>
+                <span class="day partial"><b>09</b>6/20</span>
+                <span class="day today"><b>10</b>今天 8/20</span>
+              </div>
+              <div class="calendar-key">
+                <span style="--key-color:var(--purple)">已打卡</span>
+                <span style="--key-color:var(--yellow)">部分</span>
+                <span style="--key-color:var(--orange-soft)">错过</span>
+                <span style="--key-color:#fff">今天</span>
+              </div>
+            </section>
+
+            <section class="journal-notebook" aria-label="醒目的错题本">
+              <h4>错题本 · 待再练</h4>
+              <div class="notebook-list">
+                <div class="notebook-item">
+                  <span>GMP 调度模型中，M 阻塞后 P 如何处理？</span>
+                  <span class="status">模糊 · 自动收录</span>
+                </div>
+                <div class="notebook-item">
+                  <span>select 没有可执行 case 时会怎样？</span>
+                  <span class="status hard">不会 · 自动收录</span>
+                </div>
+              </div>
+              <div class="notebook-rule">重新自评为“掌握”即移出；不提供独立手动收藏状态。</div>
+            </section>
+          </div>
+
+          <article class="journal-question" aria-label="不会评分后的反馈">
+            <p class="micro-label">最近一次自评 · Runtime</p>
+            <h4>Go 的 GC Pacer 如何根据 GOGC 调整回收目标？</h4>
+            <div class="feedback hard">
+              <span>↻ 没关系，继续努力</span>
+              <small>+2 XP · 次要信息</small>
+            </div>
+          </article>
+
+          <div class="success-state" aria-label="进度手帐完成状态">
+            <span class="mascot tiny normal" aria-hidden="true">
+              <span class="mascot-face">
+                <i class="eye left"></i><i class="eye right"></i><i class="mouth"></i>
+              </span>
+            </span>
+            <span>
+              <strong>今日打卡成功</strong>
+              <small>20 / 20 后立即恢复普通心情，并把今天标为“已打卡”。</small>
+            </span>
+          </div>
+        </div>
+
+        <div class="pros-cons">
+          <section>
+            <h3>优点</h3>
+            <ul>
+              <li>打卡缺口与错题分布一眼可见</li>
+              <li>最适合先复盘、再决定练什么</li>
+            </ul>
+          </section>
+          <section>
+            <h3>代价</h3>
+            <ul>
+              <li>信息密度最高，单卡沉浸较弱</li>
+              <li>吉祥物陪伴感最安静</li>
+            </ul>
+          </section>
+        </div>
+        <p class="choice-callout">选择 C · 让日历与错题数据主导下一步</p>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

@@ -27,6 +27,7 @@
     frantic: "抓狂",
   });
   const XP_PER_LEVEL = 100;
+  const UPDATE_READY_MESSAGE = "新版本已准备好，可在保存当前进度后更新。";
   const LEVEL_UP_EFFECT_MS = 1300;
   const CHECKIN_SUCCESS_LABEL = "今日打卡成功";
   const CHECKIN_CELEBRATION_TITLE = "恭喜，今日打卡成功";
@@ -1860,6 +1861,7 @@
       "app-error",
       "storage-warning",
       "update-notice",
+      "update-message",
       "round-summary",
       "install-button",
       "install-help",
@@ -2952,6 +2954,13 @@
       ) {
         waitingWorker = worker;
       }
+      elements["update-message"].textContent = UPDATE_READY_MESSAGE;
+      elements["update-notice"].hidden = false;
+    }
+
+    // The notice is its own live region, so the text alone announces itself.
+    function refuseUpdate(message) {
+      elements["update-message"].textContent = message;
       elements["update-notice"].hidden = false;
     }
 
@@ -3034,19 +3043,19 @@
     }
 
     function requestUpdate() {
-      if (answerVisible || isTransitioning) {
-        announce("请先完成当前题目，再更新应用。");
+      if (isTransitioning) {
+        refuseUpdate("本次自评还在保存，请稍后再点更新。");
         return;
       }
       if (
         waitingWorker === null
         || typeof waitingWorker.postMessage !== "function"
       ) {
-        announce("更新仍在准备中，请稍后再试。");
+        refuseUpdate("更新仍在准备中，请稍后再试。");
         return;
       }
       if (!persist()) {
-        announce("当前进度尚未保存，请先导出备份再更新。");
+        refuseUpdate("当前进度尚未保存，请先导出备份再更新。");
         return;
       }
       reloadOnControllerChange = true;

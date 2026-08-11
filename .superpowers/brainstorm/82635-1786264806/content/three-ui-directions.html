@@ -1,0 +1,891 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Go 面试刷题 UI 方向</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #17211d;
+      background: #eef2ef;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      min-width: 320px;
+      margin: 0;
+      background:
+        radial-gradient(circle at 50% -12%, #ffffff 0, transparent 32rem),
+        #eef2ef;
+    }
+
+    button {
+      font: inherit;
+    }
+
+    .page {
+      width: min(100% - 40px, 1460px);
+      margin: 0 auto;
+      padding: 40px 0 60px;
+    }
+
+    .intro {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 26px;
+    }
+
+    .eyebrow {
+      margin: 0 0 7px;
+      color: #65716b;
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(28px, 4vw, 46px);
+      letter-spacing: -.045em;
+    }
+
+    .intro p:last-child {
+      max-width: 500px;
+      margin: 0;
+      color: #65716b;
+      line-height: 1.7;
+    }
+
+    .design-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 22px;
+    }
+
+    .design {
+      overflow: hidden;
+      border: 2px solid transparent;
+      border-radius: 26px;
+      background: #fff;
+      box-shadow: 0 20px 50px rgb(20 42 31 / 10%);
+      cursor: pointer;
+      transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+    }
+
+    .design:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 28px 64px rgb(20 42 31 / 16%);
+    }
+
+    .design.selected {
+      border-color: #1e8b61;
+      box-shadow: 0 0 0 4px rgb(30 139 97 / 14%), 0 28px 64px rgb(20 42 31 / 16%);
+    }
+
+    .mock-screen {
+      min-height: 625px;
+    }
+
+    .caption {
+      padding: 19px 21px 22px;
+      border-top: 1px solid #e7ece9;
+      background: #fff;
+    }
+
+    .caption-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .option-letter {
+      display: grid;
+      flex: 0 0 auto;
+      width: 30px;
+      height: 30px;
+      place-items: center;
+      border-radius: 50%;
+      color: #fff;
+      background: #17211d;
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .caption h2 {
+      flex: 1;
+      margin: 0;
+      font-size: 18px;
+    }
+
+    .caption p {
+      margin: 9px 0 0 42px;
+      color: #68736e;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    /* A — mock interview */
+    .interview {
+      display: flex;
+      min-height: 625px;
+      flex-direction: column;
+      color: #f4f7f5;
+      background:
+        radial-gradient(circle at 92% 3%, rgb(56 240 160 / 20%), transparent 18rem),
+        linear-gradient(160deg, #071611, #0a231a 58%, #0e2e22);
+    }
+
+    .interview-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 24px 25px 18px;
+    }
+
+    .interview-brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 850;
+      letter-spacing: -.02em;
+    }
+
+    .go-mark {
+      display: grid;
+      width: 36px;
+      height: 36px;
+      place-items: center;
+      border-radius: 10px;
+      color: #082017;
+      background: #4ee5a0;
+      font-size: 13px;
+      font-weight: 950;
+    }
+
+    .live {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 11px;
+      border: 1px solid rgb(255 255 255 / 13%);
+      border-radius: 999px;
+      color: #b9c9c1;
+      background: rgb(255 255 255 / 6%);
+      font-size: 11px;
+      font-weight: 750;
+    }
+
+    .live::before {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #4ee5a0;
+      box-shadow: 0 0 0 4px rgb(78 229 160 / 12%);
+      content: "";
+    }
+
+    .interview-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 25px;
+      border-block: 1px solid rgb(255 255 255 / 8%);
+      color: #91a69c;
+      font-size: 12px;
+    }
+
+    .timer {
+      color: #f6fbf8;
+      font-variant-numeric: tabular-nums;
+      font-size: 20px;
+      font-weight: 850;
+      letter-spacing: .04em;
+    }
+
+    .interview-main {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      padding: 28px 25px 24px;
+    }
+
+    .round-label {
+      margin-bottom: 12px;
+      color: #4ee5a0;
+      font-size: 11px;
+      font-weight: 850;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+    }
+
+    .interview-question {
+      margin: 0;
+      font-size: 27px;
+      line-height: 1.32;
+      letter-spacing: -.035em;
+    }
+
+    .interview-tip {
+      margin: 15px 0 0;
+      color: #94aaa0;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .thinking-box {
+      display: flex;
+      min-height: 144px;
+      margin-top: 25px;
+      padding: 18px;
+      border: 1px dashed rgb(78 229 160 / 24%);
+      border-radius: 17px;
+      align-items: center;
+      justify-content: center;
+      color: #80968b;
+      background: rgb(255 255 255 / 3%);
+      text-align: center;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .confidence-title {
+      margin: auto 0 10px;
+      color: #9bafa5;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .confidence {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+
+    .confidence span {
+      padding: 11px 5px;
+      border: 1px solid rgb(255 255 255 / 10%);
+      border-radius: 11px;
+      color: #c6d4cd;
+      background: rgb(255 255 255 / 5%);
+      text-align: center;
+      font-size: 11px;
+      font-weight: 750;
+    }
+
+    .reveal-dark {
+      width: 100%;
+      margin-top: 11px;
+      padding: 14px;
+      border: 0;
+      border-radius: 13px;
+      color: #092117;
+      background: #4ee5a0;
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    /* B — game sprint */
+    .sprint {
+      min-height: 625px;
+      padding: 22px;
+      color: #17213c;
+      background:
+        radial-gradient(circle at 90% 3%, rgb(255 175 85 / 28%), transparent 15rem),
+        #f6f1e7;
+    }
+
+    .sprint-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .sprint-brand {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 16px;
+      font-weight: 950;
+      letter-spacing: -.03em;
+    }
+
+    .bolt {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border: 2px solid #17213c;
+      border-radius: 11px;
+      color: #fff;
+      background: #6757df;
+      box-shadow: 3px 3px 0 #17213c;
+    }
+
+    .streak {
+      padding: 8px 11px;
+      border: 1.5px solid #17213c;
+      border-radius: 999px;
+      background: #fff9ec;
+      box-shadow: 2px 2px 0 #17213c;
+      font-size: 11px;
+      font-weight: 850;
+    }
+
+    .daily-panel {
+      margin-top: 20px;
+      padding: 16px;
+      border: 2px solid #17213c;
+      border-radius: 17px;
+      background: #ffdd73;
+      box-shadow: 4px 4px 0 #17213c;
+    }
+
+    .daily-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      font-weight: 850;
+    }
+
+    .daily-row strong {
+      font-size: 15px;
+    }
+
+    .sprint-track {
+      height: 10px;
+      margin-top: 10px;
+      overflow: hidden;
+      border: 1.5px solid #17213c;
+      border-radius: 999px;
+      background: #fff8df;
+    }
+
+    .sprint-track span {
+      display: block;
+      width: 62%;
+      height: 100%;
+      background: #ff6e4a;
+    }
+
+    .topic-row {
+      display: flex;
+      gap: 7px;
+      margin-top: 19px;
+    }
+
+    .topic {
+      padding: 7px 10px;
+      border: 1.5px solid #17213c;
+      border-radius: 999px;
+      background: #fff;
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .topic.active {
+      color: #fff;
+      background: #6757df;
+    }
+
+    .sprint-card {
+      margin-top: 13px;
+      padding: 22px;
+      border: 2px solid #17213c;
+      border-radius: 20px;
+      background: #fffdf7;
+      box-shadow: 5px 5px 0 #17213c;
+    }
+
+    .xp-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: #6757df;
+      font-size: 10px;
+      font-weight: 900;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    .xp-pill {
+      padding: 5px 8px;
+      border-radius: 999px;
+      color: #8a451c;
+      background: #ffe0c2;
+      letter-spacing: 0;
+    }
+
+    .sprint-question {
+      margin: 20px 0 0;
+      font-size: 24px;
+      line-height: 1.34;
+      letter-spacing: -.035em;
+    }
+
+    .sprint-hint {
+      margin: 12px 0 0;
+      color: #72788b;
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .recall-options {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 9px;
+      margin-top: 21px;
+    }
+
+    .recall-options span {
+      padding: 11px 8px;
+      border: 1.5px solid #17213c;
+      border-radius: 11px;
+      background: #f4f0ff;
+      text-align: center;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .recall-options span:last-child {
+      background: #e1f6c8;
+    }
+
+    .reveal-bright {
+      width: 100%;
+      margin-top: 10px;
+      padding: 14px;
+      border: 2px solid #17213c;
+      border-radius: 13px;
+      color: #fff;
+      background: #ff6e4a;
+      box-shadow: 3px 3px 0 #17213c;
+      font-weight: 900;
+    }
+
+    .sprint-footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 18px;
+      color: #666d7d;
+      font-size: 10px;
+      font-weight: 750;
+    }
+
+    .dots {
+      display: flex;
+      gap: 5px;
+    }
+
+    .dots i {
+      display: block;
+      width: 7px;
+      height: 7px;
+      border: 1px solid #17213c;
+      border-radius: 50%;
+      background: #fff;
+    }
+
+    .dots i.done {
+      background: #6757df;
+    }
+
+    /* C — study cockpit */
+    .cockpit {
+      min-height: 625px;
+      color: #132238;
+      background: #f5f8fb;
+    }
+
+    .cockpit-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 21px 22px;
+      border-bottom: 1px solid #dfe7ef;
+      background: #fff;
+    }
+
+    .cockpit-brand {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 15px;
+      font-weight: 900;
+    }
+
+    .cockpit-logo {
+      display: grid;
+      width: 33px;
+      height: 33px;
+      place-items: center;
+      border-radius: 9px;
+      color: #fff;
+      background: #1769e0;
+      font-size: 11px;
+      font-weight: 950;
+    }
+
+    .session-tag {
+      color: #738196;
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .cockpit-body {
+      display: grid;
+      grid-template-columns: 104px 1fr;
+      min-height: 558px;
+    }
+
+    .question-map {
+      padding: 17px 14px;
+      border-right: 1px solid #dfe7ef;
+      background: #edf3f8;
+    }
+
+    .map-title {
+      margin: 0 0 12px;
+      color: #75849a;
+      font-size: 9px;
+      font-weight: 900;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+
+    .number-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 7px;
+    }
+
+    .number-grid span {
+      display: grid;
+      height: 31px;
+      place-items: center;
+      border: 1px solid #d5e0ea;
+      border-radius: 8px;
+      color: #64748a;
+      background: #fff;
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .number-grid .mastered {
+      border-color: #b9dfcc;
+      color: #15724a;
+      background: #dbf3e6;
+    }
+
+    .number-grid .missed {
+      border-color: #f3c8c1;
+      color: #ad3b2c;
+      background: #fff0ed;
+    }
+
+    .number-grid .current {
+      border-color: #1769e0;
+      color: #fff;
+      background: #1769e0;
+      box-shadow: 0 5px 12px rgb(23 105 224 / 24%);
+    }
+
+    .map-legend {
+      margin-top: 18px;
+      color: #7d8999;
+      font-size: 8px;
+      line-height: 1.9;
+    }
+
+    .cockpit-main {
+      display: flex;
+      min-width: 0;
+      flex-direction: column;
+      padding: 23px 21px 20px;
+    }
+
+    .cockpit-progress {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: #718096;
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .cockpit-progress strong {
+      color: #1769e0;
+    }
+
+    .line-track {
+      height: 5px;
+      margin-top: 10px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #dce5ee;
+    }
+
+    .line-track span {
+      display: block;
+      width: 42%;
+      height: 100%;
+      border-radius: inherit;
+      background: #1769e0;
+    }
+
+    .domain {
+      align-self: flex-start;
+      margin-top: 22px;
+      padding: 6px 9px;
+      border-radius: 7px;
+      color: #1769e0;
+      background: #e4efff;
+      font-size: 9px;
+      font-weight: 900;
+    }
+
+    .cockpit-question {
+      margin: 14px 0 0;
+      font-size: 24px;
+      line-height: 1.34;
+      letter-spacing: -.035em;
+    }
+
+    .prompt-note {
+      margin: 11px 0 0;
+      color: #718096;
+      font-size: 11px;
+      line-height: 1.55;
+    }
+
+    .notes {
+      min-height: 115px;
+      margin-top: 19px;
+      padding: 13px;
+      border: 1px solid #d5e0ea;
+      border-radius: 12px;
+      color: #98a4b3;
+      background:
+        repeating-linear-gradient(#fff, #fff 27px, #edf2f7 28px);
+      font-size: 10px;
+    }
+
+    .cockpit-actions {
+      display: grid;
+      grid-template-columns: 40px 1fr 40px;
+      gap: 8px;
+      margin-top: auto;
+    }
+
+    .cockpit-actions button {
+      min-height: 43px;
+      border: 1px solid #cdd9e5;
+      border-radius: 11px;
+      color: #53647b;
+      background: #fff;
+      font-weight: 850;
+    }
+
+    .cockpit-actions .primary {
+      border-color: #1769e0;
+      color: #fff;
+      background: #1769e0;
+    }
+
+    .rating-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 11px;
+      color: #7d8999;
+      font-size: 9px;
+    }
+
+    .rating-row strong {
+      color: #203149;
+    }
+
+    @media (max-width: 1100px) {
+      .design-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .design {
+        width: min(100%, 560px);
+        margin-inline: auto;
+      }
+
+      .intro {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="intro">
+      <div>
+        <p class="eyebrow">Visual direction · Round 01</p>
+        <h1>哪一种更像你想要的“刷题”？</h1>
+      </div>
+      <p>三个方向都保留离线与 GitHub Pages 能力，但训练节奏完全不同。点击你最接近的方向，后续再细化布局与功能。</p>
+    </header>
+
+    <section class="design-grid" aria-label="三个 UI 设计方向">
+      <article class="design" data-choice="interview-arena" onclick="toggleSelect(this)">
+        <div class="mock-screen interview">
+          <header class="interview-top">
+            <div class="interview-brand">
+              <span class="go-mark">GO</span>
+              面试模拟舱
+            </div>
+            <span class="live">模拟进行中</span>
+          </header>
+          <div class="interview-meta">
+            <span>ROUND 07 / 20</span>
+            <span class="timer">12:48</span>
+            <span>并发 · 中级</span>
+          </div>
+          <section class="interview-main">
+            <span class="round-label">Interviewer asks</span>
+            <h3 class="interview-question">请解释 GMP 调度模型，以及发生系统调用时会怎样？</h3>
+            <p class="interview-tip">先用自己的语言组织答案，再查看参考要点。</p>
+            <div class="thinking-box">思考区<br>建议用 60–90 秒完整口述</div>
+            <p class="confidence-title">作答前，你对这题有多大把握？</p>
+            <div class="confidence">
+              <span>完全不会</span>
+              <span>有点模糊</span>
+              <span>能够讲清</span>
+            </div>
+            <button class="reveal-dark" type="button">完成作答 · 查看参考答案</button>
+          </section>
+        </div>
+        <footer class="caption">
+          <div class="caption-row">
+            <span class="option-letter">A</span>
+            <h2>模拟面试舱</h2>
+          </div>
+          <p>强调计时、口述和自评，最有真实面试压迫感。</p>
+        </footer>
+      </article>
+
+      <article class="design" data-choice="daily-sprint" onclick="toggleSelect(this)">
+        <div class="mock-screen sprint">
+          <header class="sprint-top">
+            <div class="sprint-brand">
+              <span class="bolt">↯</span>
+              Go 冲刺营
+            </div>
+            <span class="streak">连续 7 天</span>
+          </header>
+          <section class="daily-panel">
+            <div class="daily-row">
+              <span>今日训练</span>
+              <strong>12 / 20</strong>
+            </div>
+            <div class="sprint-track"><span></span></div>
+          </section>
+          <nav class="topic-row" aria-label="题目分类">
+            <span class="topic active">随机</span>
+            <span class="topic">并发</span>
+            <span class="topic">内存</span>
+            <span class="topic">网络</span>
+          </nav>
+          <article class="sprint-card">
+            <div class="xp-row">
+              <span>第 13 题</span>
+              <span class="xp-pill">答对 +20 XP</span>
+            </div>
+            <h3 class="sprint-question">Go 中 defer 的执行顺序和参数求值时机是什么？</h3>
+            <p class="sprint-hint">先在脑中说出三个关键点，再揭晓答案。</p>
+            <div class="recall-options">
+              <span>需要复习</span>
+              <span>我能回答</span>
+            </div>
+            <button class="reveal-bright" type="button">揭晓答案</button>
+          </article>
+          <footer class="sprint-footer">
+            <span>本轮正确率 83%</span>
+            <span class="dots">
+              <i class="done"></i><i class="done"></i><i class="done"></i>
+              <i class="done"></i><i></i><i></i>
+            </span>
+            <span>360 XP</span>
+          </footer>
+        </div>
+        <footer class="caption">
+          <div class="caption-row">
+            <span class="option-letter">B</span>
+            <h2>每日闯关冲刺</h2>
+          </div>
+          <p>强调连续训练、XP 和即时反馈，最有游戏刷题感。</p>
+        </footer>
+      </article>
+
+      <article class="design" data-choice="study-cockpit" onclick="toggleSelect(this)">
+        <div class="mock-screen cockpit">
+          <header class="cockpit-top">
+            <div class="cockpit-brand">
+              <span class="cockpit-logo">GQ</span>
+              Go Question Lab
+            </div>
+            <span class="session-tag">离线训练 · 已保存</span>
+          </header>
+          <div class="cockpit-body">
+            <aside class="question-map">
+              <p class="map-title">本轮题目</p>
+              <div class="number-grid">
+                <span class="mastered">01</span><span class="mastered">02</span>
+                <span class="missed">03</span><span class="mastered">04</span>
+                <span class="mastered">05</span><span class="current">06</span>
+                <span>07</span><span>08</span>
+                <span>09</span><span>10</span>
+                <span>11</span><span>12</span>
+              </div>
+              <p class="map-legend">绿色：掌握<br>红色：待复习<br>蓝色：当前</p>
+            </aside>
+            <section class="cockpit-main">
+              <div class="cockpit-progress">
+                <span>SESSION PROGRESS</span>
+                <strong>6 / 12</strong>
+              </div>
+              <div class="line-track"><span></span></div>
+              <span class="domain">Runtime · GC</span>
+              <h3 class="cockpit-question">什么情况下会触发 Go 的垃圾回收？</h3>
+              <p class="prompt-note">请回答触发条件、GC Pacer 与 GOGC 的关系。</p>
+              <div class="notes">在这里写下你的回答要点（仅保存在本地）…</div>
+              <div class="cockpit-actions">
+                <button type="button">←</button>
+                <button class="primary" type="button">显示参考答案</button>
+                <button type="button">→</button>
+              </div>
+              <div class="rating-row">
+                <span>快捷键：空格揭晓 · 1/2/3 自评</span>
+                <strong>专注模式</strong>
+              </div>
+            </section>
+          </div>
+        </div>
+        <footer class="caption">
+          <div class="caption-row">
+            <span class="option-letter">C</span>
+            <h2>专业训练工作台</h2>
+          </div>
+          <p>强调题号地图、答题笔记和训练复盘，信息最完整。</p>
+        </footer>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

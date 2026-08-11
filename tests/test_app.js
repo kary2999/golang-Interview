@@ -238,6 +238,7 @@ function makeFakeDocument() {
     "storage-warning",
     "update-notice",
     "update-action",
+    "update-message",
     "round-summary",
     "install-button",
     "install-help",
@@ -1706,15 +1707,44 @@ test("service worker registers only in secure contexts and surfaces updates", as
 
   secureDocument.elements.get("answer-button").click();
   secureDocument.elements.get("update-action").click();
-  assert.equal(skipWaitingMessages, 0);
-  assert.equal(reloads, 0);
-
-  secureDocument.elements.get("answer-button").click();
-  secureDocument.elements.get("update-action").click();
   assert.equal(skipWaitingMessages, 1);
   assert.equal(reloads, 0);
   controllerChange();
   assert.equal(reloads, 1);
+});
+
+test("a refused update explains itself in the visible notice", async () => {
+  const documentObject = makeFakeDocument();
+  const initial = createInitialState([1, 2, 3], () => 0);
+  const storage = makeStorage({
+    [STORAGE_KEY]: JSON.stringify(initial),
+  });
+  let skipWaitingMessages = 0;
+  const browserGlobal = makeBrowserGlobal({ reducedMotion: true, storage });
+  browserGlobal.location = { hostname: "example.test", protocol: "https:" };
+  browserGlobal.navigator.serviceWorker = {
+    addEventListener() {},
+    controller: {},
+    register() {
+      return {
+        addEventListener() {},
+        waiting: null,
+      };
+    },
+  };
+
+  startBrowserApp(documentObject, browserGlobal);
+  await Promise.resolve();
+  await Promise.resolve();
+
+  const message = documentObject.elements.get("update-message");
+  const defaultMessage = message.textContent;
+  documentObject.elements.get("update-action").click();
+
+  assert.equal(skipWaitingMessages, 0);
+  assert.notEqual(message.textContent, defaultMessage);
+  assert.match(message.textContent, /准备中/);
+  assert.equal(documentObject.elements.get("update-notice").hidden, false);
 });
 
 test("service-worker eligibility is HTTPS or localhost HTTP only", () => {
