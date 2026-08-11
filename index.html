@@ -209,16 +209,16 @@
       <div class="xp-status">
         <div class="xp-copy">
           <strong id="level-text">Lv. 1</strong>
-          <span id="xp-text" aria-live="polite">0 / 1000 XP</span>
+          <span id="xp-text" aria-live="polite">0 / 20 XP</span>
         </div>
         <div
           class="xp-track"
           role="progressbar"
           aria-label="等级经验"
           aria-valuemin="0"
-          aria-valuemax="1000"
+          aria-valuemax="20"
           aria-valuenow="0"
-          aria-valuetext="0 / 1000 XP"
+          aria-valuetext="0 / 20 XP"
         >
           <span id="xp-fill" class="xp-fill"></span>
         </div>
@@ -709,6 +709,28 @@
       </button>
     </dialog>
   </main>
+
+  <div id="level-up-effect" class="level-up-effect" aria-hidden="true" hidden>
+    <p class="level-up-card">
+      <span class="level-up-kicker">LEVEL UP</span>
+      <strong id="level-up-badge" class="level-up-badge">Lv. 2</strong>
+      <span class="level-up-note">又升一级，继续保持</span>
+    </p>
+    <span class="level-up-confetti">
+      <span></span>
+      <span></span>
+      <span></span>
+      <span></span>
+      <span></span>
+      <span></span>
+      <span></span>
+      <span></span>
+      <span></span>
+      <span></span>
+      <span></span>
+      <span></span>
+    </span>
+  </div>
 
   <div
     id="live-region"

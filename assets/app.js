@@ -26,6 +26,8 @@
     anxious: "焦虑",
     frantic: "抓狂",
   });
+  const XP_PER_LEVEL = 20;
+  const LEVEL_UP_EFFECT_MS = 1300;
   const CHECKIN_SUCCESS_LABEL = "今日打卡成功";
   const CHECKIN_CELEBRATION_TITLE = "恭喜，今日打卡成功";
   const CHECKIN_CELEBRATION_MESSAGE = (
@@ -406,9 +408,9 @@
       throw new TypeError("total XP must be a nonnegative integer");
     }
     return {
-      level: Math.floor(totalXp / 1000) + 1,
-      currentXp: totalXp % 1000,
-      requiredXp: 1000,
+      level: Math.floor(totalXp / XP_PER_LEVEL) + 1,
+      currentXp: totalXp % XP_PER_LEVEL,
+      requiredXp: XP_PER_LEVEL,
     };
   }
 
@@ -1898,6 +1900,8 @@
       "checkin-dialog-message",
       "checkin-dialog-stats",
       "checkin-dialog-close",
+      "level-up-effect",
+      "level-up-badge",
       "rating-feedback-primary",
       "rating-feedback-secondary",
       "progress-text",
@@ -2026,6 +2030,7 @@
     let isTransitioning = false;
     let visibleCalendarMonth = null;
     let mascotTimerId = null;
+    let levelUpTimerId = null;
     let studyRecordsOpen = false;
     let deferredInstallPrompt = null;
     let waitingWorker = null;
@@ -2612,6 +2617,8 @@
         }
         if (result.outcome.checkInCompleted) {
           celebrateDailyCheckIn(checkIn);
+        } else if (result.outcome.leveledUp) {
+          playLevelUpEffect(deriveLevel(state.profile.totalXp).level);
         }
       };
       if (reducedMotion || typeof browserGlobal.setTimeout !== "function") {
@@ -2645,6 +2652,35 @@
           elements["checkin-dialog-close"].focus();
         }
       }
+    }
+
+    function playLevelUpEffect(level) {
+      if (typeof browserGlobal.setTimeout !== "function") {
+        return;
+      }
+      const effect = elements["level-up-effect"];
+      elements["level-up-badge"].textContent = `Lv. ${level}`;
+      if (levelUpTimerId !== null) {
+        if (typeof browserGlobal.clearTimeout === "function") {
+          browserGlobal.clearTimeout(levelUpTimerId);
+        }
+        levelUpTimerId = null;
+      }
+      // Hiding and reading layout restarts the effect on back-to-back levels.
+      effect.hidden = true;
+      if (typeof effect.getBoundingClientRect === "function") {
+        effect.getBoundingClientRect();
+      }
+      effect.hidden = false;
+      levelUpTimerId = browserGlobal.setTimeout(
+        () => {
+          levelUpTimerId = null;
+          effect.hidden = true;
+        },
+        reducedMotion
+          ? Math.round(LEVEL_UP_EFFECT_MS / 2)
+          : LEVEL_UP_EFFECT_MS,
+      );
     }
 
     function celebrateDailyCheckIn(checkIn) {
@@ -3210,6 +3246,7 @@
 
     showWarning(storageAccessWarning || loaded.warning);
     elements["update-notice"].hidden = true;
+    elements["level-up-effect"].hidden = true;
     setupInstallation();
     setupServiceWorker();
     render();
@@ -3251,6 +3288,7 @@
     STATE_VERSION,
     STORAGE_KEY,
     V2_MIGRATION_NOTICE,
+    XP_PER_LEVEL,
     applyRating,
     buildRatingAnnouncement,
     canRegisterServiceWorker,

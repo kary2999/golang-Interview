@@ -1244,6 +1244,115 @@ button:not(:disabled):active,
   margin: 18px 0;
 }
 
+.level-up-effect {
+  position: fixed;
+  z-index: 90;
+  inset: 0;
+  display: grid;
+  overflow: hidden;
+  padding-top: clamp(56px, 13vh, 140px);
+  place-items: start center;
+  pointer-events: none;
+}
+
+.level-up-card {
+  display: grid;
+  margin: 0;
+  padding: 18px 30px;
+  animation: level-up-pop 320ms ease-out both;
+  border: var(--line-heavy);
+  border-radius: 20px;
+  background: var(--yellow);
+  box-shadow: var(--shadow-large);
+  gap: 2px;
+  justify-items: center;
+  text-align: center;
+}
+
+.level-up-kicker {
+  color: var(--purple-dark);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+}
+
+.level-up-badge {
+  font-size: clamp(1.7rem, 6vw, 2.3rem);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.level-up-note {
+  color: var(--navy-soft);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.level-up-confetti span {
+  position: absolute;
+  top: -24px;
+  width: 11px;
+  height: 15px;
+  animation: level-up-confetti 1.3s ease-in forwards;
+  border: 2px solid var(--navy);
+  border-radius: 3px;
+}
+
+.level-up-confetti span:nth-child(odd) {
+  background: var(--orange);
+}
+
+.level-up-confetti span:nth-child(even) {
+  background: var(--purple);
+}
+
+.level-up-confetti span:nth-child(3n) {
+  background: var(--sky);
+  border-radius: 50%;
+}
+
+.level-up-confetti span:nth-child(1) { left: 8%; animation-delay: 0ms; }
+.level-up-confetti span:nth-child(2) { left: 17%; animation-delay: 120ms; }
+.level-up-confetti span:nth-child(3) { left: 26%; animation-delay: 40ms; }
+.level-up-confetti span:nth-child(4) { left: 35%; animation-delay: 200ms; }
+.level-up-confetti span:nth-child(5) { left: 44%; animation-delay: 80ms; }
+.level-up-confetti span:nth-child(6) { left: 53%; animation-delay: 240ms; }
+.level-up-confetti span:nth-child(7) { left: 62%; animation-delay: 20ms; }
+.level-up-confetti span:nth-child(8) { left: 71%; animation-delay: 160ms; }
+.level-up-confetti span:nth-child(9) { left: 80%; animation-delay: 60ms; }
+.level-up-confetti span:nth-child(10) { left: 89%; animation-delay: 220ms; }
+.level-up-confetti span:nth-child(11) { left: 95%; animation-delay: 100ms; }
+.level-up-confetti span:nth-child(12) { left: 3%; animation-delay: 180ms; }
+
+@keyframes level-up-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.62) translateY(16px);
+  }
+
+  60% {
+    opacity: 1;
+    transform: scale(1.07) translateY(0);
+  }
+
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes level-up-confetti {
+  0% {
+    opacity: 1;
+    transform: translateY(0) rotate(0deg);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateY(105vh) rotate(420deg);
+  }
+}
+
 .checkin-dialog {
   width: min(calc(100% - 28px), 420px);
   text-align: center;
@@ -1701,5 +1810,9 @@ label.data-action:hover {
 
   .mascot-frantic {
     transform: none;
+  }
+
+  .level-up-confetti {
+    display: none;
   }
 }

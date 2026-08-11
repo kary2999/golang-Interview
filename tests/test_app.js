@@ -24,6 +24,7 @@ const {
   STATE_VERSION,
   STORAGE_KEY,
   V2_MIGRATION_NOTICE,
+  XP_PER_LEVEL,
   applyRating,
   buildRatingAnnouncement,
   canRegisterServiceWorker,
@@ -278,6 +279,8 @@ function makeFakeDocument() {
     "checkin-dialog-message",
     "checkin-dialog-stats",
     "checkin-dialog-close",
+    "level-up-effect",
+    "level-up-badge",
     "rating-feedback-primary",
     "rating-feedback-secondary",
     "progress-text",
@@ -727,16 +730,17 @@ test("a hard question stays out of the stream after later ratings", () => {
   assert.deepEqual(state.hardIds, [hardQuestionId]);
 });
 
-test("deriveLevel uses fixed 1000 XP levels", () => {
+test("deriveLevel uses fixed 20 XP levels", () => {
+  assert.equal(XP_PER_LEVEL, 20);
   assert.deepEqual(deriveLevel(0), {
     level: 1,
     currentXp: 0,
-    requiredXp: 1000,
+    requiredXp: 20,
   });
-  assert.deepEqual(deriveLevel(2680), {
+  assert.deepEqual(deriveLevel(50), {
     level: 3,
-    currentXp: 680,
-    requiredXp: 1000,
+    currentXp: 10,
+    requiredXp: 20,
   });
   assert.throws(() => deriveLevel(-1), TypeError);
 });
@@ -1491,15 +1495,15 @@ test("reduced motion advances immediately and renders sprint profile", () => {
   assert.equal(persisted.profile.totalXp, 20);
   assert.match(
     documentObject.elements.get("level-text").textContent,
-    /1/,
+    /2/,
   );
   assert.match(
     documentObject.elements.get("xp-text").textContent,
-    /20\s*\/\s*1000/,
+    /0\s*\/\s*20/,
   );
   assert.equal(
     documentObject.elements.get("xp-fill").style.width,
-    "2%",
+    "0%",
   );
   assert.match(
     documentObject.elements.get("mastery-combo").textContent,
@@ -1899,7 +1903,7 @@ test("browser import confirms valid replacement and rejects invalid input", asyn
   assert.equal(JSON.parse(storage.writes.at(-1)[1]).profile.totalXp, 20);
   assert.match(
     documentObject.elements.get("xp-text").textContent,
-    /20\s*\/\s*1000/,
+    /0\s*\/\s*20/,
   );
 
   const writesBeforeInvalid = storage.writes.length;
@@ -2560,4 +2564,78 @@ test("celebration dialog is declared in the page shell", () => {
   assert.match(html, /<dialog\b[^>]*id="checkin-dialog"/);
   assert.match(html, /id="checkin-dialog-close"/);
   assert.match(html, /aria-labelledby="checkin-dialog-title"/);
+});
+
+test("leveling up plays a self-dismissing effect", () => {
+  const documentObject = makeFakeDocument();
+  const initial = createInitialState([1, 2, 3], () => 0);
+  const storage = makeStorage({
+    [STORAGE_KEY]: JSON.stringify(initial),
+  });
+  const browserGlobal = makeBrowserGlobal({ reducedMotion: true, storage });
+  startBrowserApp(documentObject, browserGlobal);
+  const effect = documentObject.elements.get("level-up-effect");
+
+  assert.equal(effect.hidden, true);
+  documentObject.elements.get("answer-button").click();
+  documentObject.elements.get("rate-mastered").click();
+
+  assert.equal(effect.hidden, false);
+  assert.match(
+    documentObject.elements.get("level-up-badge").textContent,
+    /Lv\. 2/,
+  );
+
+  browserGlobal.runTimers();
+  assert.equal(effect.hidden, true);
+});
+
+test("a rating below the level threshold keeps the effect hidden", () => {
+  const documentObject = makeFakeDocument();
+  const initial = createInitialState([1, 2, 3], () => 0);
+  const storage = makeStorage({
+    [STORAGE_KEY]: JSON.stringify(initial),
+  });
+  const browserGlobal = makeBrowserGlobal({ reducedMotion: true, storage });
+  startBrowserApp(documentObject, browserGlobal);
+
+  documentObject.elements.get("answer-button").click();
+  documentObject.elements.get("rate-hard").click();
+
+  assert.equal(documentObject.elements.get("level-up-effect").hidden, true);
+});
+
+test("the daily celebration dialog suppresses the level-up effect", () => {
+  const ids = Array.from({ length: 30 }, (_, index) => index + 1);
+  const documentObject = makeFakeDocument();
+  const storage = makeStorage({
+    [STORAGE_KEY]: JSON.stringify(
+      makeCheckInState(DAILY_CHECKIN_UNIQUE_QUESTIONS - 1, 30, ids),
+    ),
+  });
+  const browserGlobal = makeBrowserGlobal({
+    questions: makeManyQuestions(30),
+    reducedMotion: true,
+    storage,
+  });
+  startBrowserApp(documentObject, browserGlobal);
+
+  documentObject.elements.get("answer-button").click();
+  documentObject.elements.get("rate-mastered").click();
+
+  assert.equal(documentObject.elements.get("checkin-dialog").open, true);
+  assert.equal(documentObject.elements.get("level-up-effect").hidden, true);
+  assert.match(
+    documentObject.elements.get("checkin-dialog-stats").textContent,
+    /Lv\. 21/,
+  );
+});
+
+test("level-up effect is declared in the page shell", () => {
+  const html = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+
+  assert.match(html, /id="level-up-effect"[^>]*aria-hidden="true"[^>]*hidden/);
+  assert.match(html, /id="level-up-badge"/);
+  assert.match(html, /0 \/ 20 XP/);
+  assert.match(html, /aria-valuemax="20"/);
 });
